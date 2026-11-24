@@ -1,0 +1,19 @@
+{
+  "name": "znx-market-analyzer",
+  "private": true,
+  "scripts": {
+    "build:ts": "tsc -p tsconfig.json",
+    "check:js": "node --check assets/js/app.js && node --check assets/js/analysis-format.js && node --check assets/js/radar.js",
+    "test:contract": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"Import-Module Pester -Force; Invoke-Pester -Path './tests/AnalysisContract.Tests.ps1' -EnableExit\"",
+    "test:market": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"Import-Module Pester -Force; Invoke-Pester -Path './tests/Market.Tests.ps1' -EnableExit\"",
+    "test:server": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"Import-Module Pester -Force; Invoke-Pester -Path './tests/Server.Tests.ps1' -EnableExit\"",
+    "replay": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/replay-analysis.ps1",
+    "test": "npm run build:ts && npm run check:js && npm run test:contract && npm run test:market && npm run test:server"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "typescript": "^7.1.0-dev.20261121.1"
+  }
+}

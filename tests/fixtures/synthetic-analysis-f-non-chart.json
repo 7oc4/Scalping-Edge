@@ -1,0 +1,58 @@
+{
+  "image_class": "D",
+  "chart_type": null,
+  "price_axis_readable": false,
+  "price_axis_min": null,
+  "price_axis_max": null,
+  "asset_visible": null,
+  "timeframe_visible": null,
+  "last_candle_status": "unknown",
+  "visual_quality": 10,
+  "analysis_coverage": 0,
+  "confidence": 0,
+  "direction": "NEUTRAL",
+  "directional_assessment": {
+    "buy_score": 0,
+    "sell_score": 0,
+    "buy_status": "unavailable",
+    "buy_evidence": [],
+    "sell_status": "unavailable",
+    "sell_evidence": [],
+    "selected_reason": "A imagem não contém gráfico financeiro identificável; nenhum lado pode ser avaliado."
+  },
+  "trend": {
+    "main": "indefinida",
+    "micro": "indefinida",
+    "structure": [],
+    "explanation": "Imagem não contém gráfico financeiro identificável."
+  },
+  "price_action": {
+    "observations": [],
+    "interpretations": [],
+    "conditions": []
+  },
+  "levels": [],
+  "patterns": [],
+  "indicators": [],
+  "volume": {
+    "visible": false,
+    "observations": [],
+    "interpretation": ""
+  },
+  "evidence_for": [],
+  "evidence_against": [],
+  "signal_timing": {
+    "action": "WAIT",
+    "signal_candle": "unknown",
+    "entry_timing": "Não há entrada; a imagem não permite confirmar um cenário.",
+    "exit_plan": "Não aplicável sem um sinal confirmado.",
+    "holding_horizon": "Não avaliável nesta imagem.",
+    "confirmation_required": [],
+    "invalidation": []
+  },
+  "conflict_notes": [],
+  "risk": [
+    "A imagem enviada não é um gráfico financeiro; nenhuma leitura técnica foi realizada"
+  ],
+  "summary": "Leitura geral:\nImagem classe D. A imagem enviada não contém gráfico financeiro identificável. Nenhuma análise técnica foi realizada.\n\nprice action:\nNão aplicável.\n\nniveis e zonas:\nNão aplicável.\n\nIndicadores e Volumes:\nNão aplicável.\n\nCenario e invalidacao:\nNão aplicável.\n\nLimitacoes:\nEnvie uma captura de tela de um gráfico de preço para obter análise técnica."
+}

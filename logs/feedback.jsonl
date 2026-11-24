@@ -1,0 +1,8 @@
+{"at":"2026-11-22T14:30:31.7317832Z","analysisId":"b59cf62266a140cabebf08542cbe148b","verdict":"miss","note":"","model":"gpt-4o-mini","contract":"8.0"}
+{"at":"2026-11-22T14:42:26.2173353Z","analysisId":"24fd6ee0d6114bc398014dd31fe79dcf","verdict":"hit","note":"","model":"gpt-4o-mini","contract":"8.0"}
+{"at":"2026-11-22T16:37:07.5378544Z","analysisId":"2afee0e8ac7849e5937f2a4c5aa85a2b","verdict":"hit","note":"","model":"gpt-4o-mini","contract":"8.0"}
+{"at":"2026-11-23T16:36:23.7474589Z","analysisId":"1b90a20fd362480f97fb2b61220893d3","verdict":"hit","note":"","model":"gpt-4o-mini","contract":"8.0"}
+{"at":"2026-11-23T16:54:44.7723827Z","analysisId":"9824e35a0d92495c96b6d240ed6bb307","verdict":"hit","note":"","model":"gpt-4o-mini","contract":"8.0"}
+{"at":"2026-11-23T18:38:52.9867143Z","analysisId":"0123456789abcdef0123456789abcdef","verdict":"invented_level","note":"","model":"gpt-4o-mini","contract":"8.0"}
+{"at":"2026-11-24T16:01:46.6247986Z","analysisId":"14e49c448aa9416689736d5a78c2ef8a","verdict":"hit","note":"","model":"gpt-4o-mini","contract":"8.0"}
+{"at":"2026-11-24T17:29:05.5930374Z","analysisId":"33527d4abd1541c883607acaf5224c7c","verdict":"hit","note":"","model":"gpt-4o-mini","contract":"8.0"}

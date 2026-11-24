@@ -1,0 +1,119 @@
+{
+  "image_class": "A",
+  "chart_type": "candlestick",
+  "price_axis_readable": true,
+  "price_axis_min": 1.3095,
+  "price_axis_max": 1.313,
+  "asset_visible": "GBP/USD",
+  "timeframe_visible": "5m",
+  "last_candle_status": "possibly_open",
+  "visual_quality": 85,
+  "analysis_coverage": 85,
+  "confidence": 70,
+  "direction": "BUY",
+  "directional_assessment": {
+    "buy_score": 75,
+    "sell_score": 50,
+    "buy_status": "supported",
+    "buy_evidence": [
+      "Fundo 1.30995 às 13:30 preservado após o rompimento de 1.31100",
+      "Fechamento da vela das 14:10 acima de 1.31100, com corpo amplo"
+    ],
+    "sell_status": "weak",
+    "sell_evidence": [
+      "Topo 1.31211 às 11:40 segue como resistência não superada",
+      "A vela das 14:20 ainda está em formação e não confirmou continuidade"
+    ],
+    "selected_reason": "BUY tem fundos ascendentes e rompimento fechado acima de 1.31100; SELL depende de perder 1.30995. Falta apenas o fechamento da vela em formação para autorizar a execução."
+  },
+  "trend": {
+    "main": "alta",
+    "micro": "alta",
+    "structure": [
+      "Fundo 1.30950 às 09:00",
+      "Topo 1.31211 às 11:40",
+      "Fundo 1.30995 às 13:30",
+      "Rompimento de 1.31100 às 14:10"
+    ],
+    "explanation": "Fundos ascendentes desde 09:00 e rompimento de 1.31100 confirmado no fechamento das 14:10, com a vela seguinte ainda em formação."
+  },
+  "price_action": {
+    "observations": [
+      "Candle amplo de alta às 14:10 com corpo dominando a amplitude",
+      "Pavio inferior em 1.30995 às 13:30 indicando rejeição de preços menores",
+      "Vela das 14:20 em formação acima de 1.31100, sem fechamento"
+    ],
+    "interpretations": [
+      "Deslocamento comprador após dois candles de indecisão",
+      "A rejeição em 1.30995 preservou o fundo mais alto da estrutura"
+    ],
+    "conditions": [
+      "Manter-se acima de 1.31100 até o fechamento da vela atual"
+    ]
+  },
+  "levels": [
+    {
+      "type": "support",
+      "value": 1.30995,
+      "region": "fundo das 13:30",
+      "reason": "Reação compradora com pavio inferior que preservou o fundo estrutural"
+    },
+    {
+      "type": "breakout",
+      "value": 1.311,
+      "region": "topo intermediário das 13:50",
+      "reason": "Fechamento acima da região às 14:10"
+    },
+    {
+      "type": "resistance",
+      "value": 1.31211,
+      "region": "topo das 11:40",
+      "reason": "Último topo relevante antes da consolidação"
+    }
+  ],
+  "patterns": [
+    {
+      "name": "bandeira de continuação",
+      "status": "visually_confirmed",
+      "evidence": [
+        "Impulso até 1.31211 e canal curto de recuo",
+        "Rompimento do limite superior às 14:10"
+      ],
+      "confirmation": "Fechamento acima de 1.31100",
+      "invalidation": "Fechamento de volta abaixo de 1.30995"
+    }
+  ],
+  "indicators": [],
+  "volume": {
+    "visible": false,
+    "observations": [],
+    "interpretation": ""
+  },
+  "evidence_for": [
+    "Fundo 1.30995 preservado com rejeição visível",
+    "Fechamento acima de 1.31100 às 14:10"
+  ],
+  "evidence_against": [
+    "Topo 1.31211 ainda não superado"
+  ],
+  "signal_timing": {
+    "action": "WAIT",
+    "signal_candle": "possibly_open",
+    "entry_timing": "Aguardar o fechamento da vela das 14:20 acima de 1.31100; a entrada hipotética seria na abertura da vela seguinte.",
+    "exit_plan": "Encerrar ao final da vela seguinte ao sinal; invalidar com fechamento abaixo de 1.30995.",
+    "holding_horizon": "Uma vela de 5 minutos após a confirmação.",
+    "confirmation_required": [
+      "Fechamento da vela das 14:20 acima de 1.31100",
+      "Corpo da vela manter-se acima de 1.30995"
+    ],
+    "invalidation": [
+      "Fechamento abaixo de 1.30995"
+    ]
+  },
+  "conflict_notes": [],
+  "risk": [
+    "A vela em formação pode devolver o preço para dentro de 1.31100",
+    "Sem volume visível, a participação no rompimento não pode ser medida"
+  ],
+  "summary": "Leitura geral:\nO preço caiu até 1.30950 às 09:00, subiu para 1.31211 às 11:40 e recuou para 1.30995 às 13:30, antes de romper 1.31100 às 14:10. A estrutura é de alta, com fundo mais alto em 1.30995, e o preço segue acima da região rompida. O viés comprador está sustentado; o que falta é o fechamento da vela em formação às 14:20.\n\nprice action:\nA vela das 14:10 fechou com corpo amplo acima de 1.31100 e pavio inferior curto, confirmando o rompimento. A vela seguinte, das 14:20, avança acima da região, mas ainda está em formação e pode devolver o preço para dentro do intervalo. O pavio inferior das 13:30 marcou a rejeição que preservou o fundo estrutural.\n\nniveis e zonas:\nO suporte em 1.30995 é a referência de defesa da estrutura e coincide com o fundo mais alto do recorte. A região de 1.31100, fechada acima às 14:10, funciona como base do movimento atual. A resistência em 1.31211 é o último topo relevante e o próximo obstáculo para a continuidade.\n\nIndicadores e Volumes:\nNenhum painel de indicador ou de volume aparece na captura. A leitura depende de estrutura, candles e fechamentos. Sem volume, a participação no rompimento não pode ser medida, e a confirmação fica restrita ao preço.\n\nCenario e invalidacao:\nO cenário comprador se mantém enquanto o preço fechar acima de 1.31100. A execução está pendente porque a vela das 14:20 não fechou; a entrada hipotética só existiria na abertura da vela seguinte a esse fechamento. A invalidação é fechamento abaixo de 1.30995, que anularia o fundo mais alto. SELL não tem confirmação enquanto 1.30995 for respeitado.\n\nLimitacoes:\nA vela em formação impede confirmar a execução, embora o viés esteja definido. A ausência de volume e de indicadores limita a leitura de participação e momentum. O topo em 1.31211 segue próximo e pode interromper o avanço."
+}

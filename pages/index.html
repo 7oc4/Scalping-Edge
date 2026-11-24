@@ -1,0 +1,425 @@
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Organize prints de gráficos de forex, criptomoedas e opções binárias para análise."
+    />
+    <meta name="theme-color" content="#080b0f" />
+    <title>Scalping Edge — Analisar Gráficos</title>
+    <link rel="stylesheet" href="../assets/css/style.css" />
+    <script src="../assets/js/analysis-format.js" defer></script>
+    <script src="../assets/js/app.js" defer></script>
+  </head>
+  <body>
+    <div class="startup-loader" id="startup-loader" role="status" aria-live="polite">
+      <span class="startup-loader-ring" aria-hidden="true"></span>
+      <span class="startup-loader-brand">SCALPING <strong>EDGE</strong></span>
+      <span class="startup-loader-caption">Preparando painel</span>
+    </div>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Navegação principal">
+        <a class="brand" href="/pages/index.html" aria-label="Scalping Edge, página inicial">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none">
+              <path d="M4 17.5 9 12l3.2 3.2L20 7" />
+              <path d="M14.5 7H20v5.5" />
+            </svg>
+          </span>
+          <span>Scalping<span class="brand-period"> Edge</span></span>
+        </a>
+
+        <p class="nav-caption">MENU</p>
+        <nav class="navigation">
+          <a class="nav-link active" href="/pages/index.html" aria-current="page">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h7v7H4zM13 4h7v4h-7zM13 10h7v10h-7zM4 13h7v7H4z" /></svg>
+            <span>Analisar Gráficos</span>
+          </a>
+          <a class="nav-link" href="/pages/radar.html">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" /><circle cx="12" cy="12" r="4" /><path d="M12 12 18.5 5.5" /></svg>
+            <span>Radar de mercado</span>
+          </a>
+          <a class="nav-link" href="/pages/noticias.html">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h13v14H5.5A1.5 1.5 0 0 1 4 17.5z" /><path d="M17 8h3v9a2 2 0 0 1-2 2h-1" /><path d="M7 9h7M7 12h7M7 15h4" /></svg>
+            <span>Notícias</span>
+          </a>
+          <a class="nav-link" href="/pages/historico.html">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 2.64-6.36L3 8" /><path d="M3 3v5h5m4-1v5l3 2" /></svg>
+            <span>Histórico</span>
+            <span class="history-count" id="history-count">0</span>
+          </a>
+        </nav>
+
+      </aside>
+
+      <main class="main-content" id="analisar">
+        <header class="topbar">
+          <button
+            class="fullscreen-toggle"
+            id="fullscreen-toggle"
+            type="button"
+            aria-label="Entrar em tela cheia"
+            aria-pressed="false"
+            title="Entrar em tela cheia"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M8 3H5a2 2 0 0 0-2 2v3m13-5h3a2 2 0 0 1 2 2v3M3 16v3a2 2 0 0 0 2 2h3m13-5v3a2 2 0 0 1-2 2h-3" />
+            </svg>
+            <span>Tela cheia</span>
+          </button>
+          <span class="visually-hidden" id="fullscreen-status" role="status" aria-live="polite"></span>
+          <span class="local-status api-unstable" id="api-status" role="status" title="Verificando a conexão com a API">
+            <span aria-hidden="true"></span>
+            <span id="api-status-text">Verificando conexão</span>
+          </span>
+        </header>
+
+        <div class="page-content">
+          <section class="page-heading" aria-labelledby="page-title">
+            <div>
+              <p class="eyebrow">LEITURA DE GRÁFICOS</p>
+              <h1 id="page-title">Entenda o seu gráfico.</h1>
+              <p class="page-description">
+                Envie um print, informe o mercado e organize sua análise em um só lugar.
+              </p>
+            </div>
+          </section>
+
+          <div class="workspace-grid">
+            <section class="panel upload-panel" aria-labelledby="upload-title">
+              <div class="panel-heading">
+                <div class="step-number">01</div>
+                <div>
+                  <h2 id="upload-title">Adicione seu print</h2>
+                  <p>Escolha uma imagem do gráfico que deseja analisar.</p>
+                </div>
+              </div>
+
+              <input
+                class="visually-hidden"
+                id="image-input"
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+              />
+              <button class="drop-zone" id="drop-zone" type="button" aria-describedby="upload-hint">
+                <span class="upload-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24">
+                    <path d="M12 16V4m0 0L7 9m5-5 5 5" />
+                    <path d="M5 14v5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-5" />
+                  </svg>
+                </span>
+                <span class="drop-title">Arraste sua imagem até aqui</span>
+                <span class="drop-subtitle">ou <span class="text-link">clique para escolher</span></span>
+                <span class="file-types" id="upload-hint">PNG, JPG ou WEBP · até 12 MB</span>
+              </button>
+
+              <div class="preview-card" id="preview-card" hidden>
+                <div class="preview-frame" id="preview-frame">
+                  <img id="image-preview" alt="Pré-visualização do print selecionado" />
+                  <div class="level-overlay" id="level-overlay" aria-hidden="true" hidden></div>
+                </div>
+                <div class="preview-details">
+                  <div>
+                    <strong id="file-name"></strong>
+                    <span id="file-size"></span>
+                  </div>
+                  <div class="preview-actions">
+                    <button
+                      class="level-toggle"
+                      id="level-toggle"
+                      type="button"
+                      aria-pressed="true"
+                      hidden
+                    >
+                      Níveis na imagem
+                    </button>
+                    <button class="remove-button" id="remove-image" type="button">
+                      Remover imagem
+                    </button>
+                  </div>
+                </div>
+                <p class="level-overlay-note" id="level-overlay-note" hidden></p>
+              </div>
+
+              <p class="field-message" id="upload-message" role="status" aria-live="polite"></p>
+
+              <div class="privacy-note">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <rect x="5" y="10" width="14" height="11" rx="2" />
+                  <path d="M8 10V7a4 4 0 1 1 8 0v3m-4 4v3" />
+                </svg>
+                <span>Para sua análise, a imagem será enviada com segurança à nossa inteligência artificial. Recomendamos não incluir dados pessoais, para sua própria proteção.</span>
+              </div>
+            </section>
+
+            <section class="panel details-panel" aria-labelledby="details-title">
+              <div class="panel-heading">
+                <div class="step-number">02</div>
+                <div>
+                  <h2 id="details-title">Contexto do mercado</h2>
+                  <p>Essas informações ajudam a organizar a leitura.</p>
+                </div>
+              </div>
+
+              <form id="analysis-form">
+                <label class="form-field">
+                  <span>Tipo de mercado</span>
+                  <select id="market-type" name="market">
+                    <option value="forex">Forex</option>
+                    <option value="crypto" selected>Criptomoedas</option>
+                    <option value="binary">Opções binárias</option>
+                    <option value="commodities">Commodities</option>
+                    <option value="stocks">Ações</option>
+                  </select>
+                </label>
+
+                <label class="form-field">
+                  <span id="asset-label">Criptomoeda</span>
+                  <input
+                    id="asset"
+                    name="asset"
+                    type="text"
+                    maxlength="32"
+                    placeholder="Ex.: EUR/USD"
+                    value="EUR/USD"
+                    autocomplete="off"
+                    hidden
+                    disabled
+                  />
+                  <select id="forex-asset" hidden disabled>
+                    <option value="EUR/USD">EUR/USD</option>
+                    <option value="EUR/GBP">EUR/GBP — Euro / Libra Esterlina</option>
+                    <option value="AUD/JPY">AUD/JPY — Dólar Australiano / Iene Japonês</option>
+                    <option value="EUR/JPY">EUR/JPY — Euro / Iene Japonês</option>
+                    <option value="GBP/USD">GBP/USD</option>
+                    <option value="AUD/CAD">AUD/CAD — Dólar Australiano / Dólar Canadense</option>
+                    <option value="USD/CAD">USD/CAD</option>
+                    <option value="NZD/USD">NZD/USD</option>
+                    <option value="USD/JPY">USD/JPY</option>
+                    <option value="CAD/JPY">CAD/JPY — Dólar Canadense / Iene Japonês</option>
+                    <option value="CHF/JPY">CHF/JPY — Franco Suíço / Iene Japonês</option>
+                    <option value="EUR/NZD">EUR/NZD</option>
+                    <option value="AUD/CHF">AUD/CHF — Dólar Australiano / Franco Suíço</option>
+                    <option value="EUR/AUD">EUR/AUD — Euro / Dólar Australiano</option>
+                    <option value="GBP/CHF">GBP/CHF — Libra Esterlina / Franco Suíço</option>
+                    <option value="GBP/AUD">GBP/AUD — Libra Esterlina / Dólar Australiano</option>
+                    <option value="USD/AUD">USD/AUD</option>
+                    <option value="GBP/JPY">GBP/JPY — Libra Esterlina / Iene Japonês</option>
+                    <option value="USD/CHF">USD/CHF</option>
+                    <option value="NZD/JPY">NZD/JPY — Dólar Neozelandês / Iene Japonês</option>
+                    <option value="EUR/CHF">EUR/CHF — Euro / Franco Suíço</option>
+                    <option value="CAD/CHF">CAD/CHF</option>
+                    <option value="EUR/CAD">EUR/CAD — Euro / Dólar Canadense</option>
+                    <option value="BTC/USD">BTC/USD</option>
+                    <option value="AUD/NZD">AUD/NZD</option>
+                    <option value="AUD/USD">AUD/USD</option>
+                    <option value="NZD/CHF">NZD/CHF</option>
+                    <option value="GBP/CAD">GBP/CAD — Libra Esterlina / Dólar Canadense</option>
+                    <option value="GBP/NZD">GBP/NZD</option>
+                    <option value="NZD/CAD">NZD/CAD</option>
+                  </select>
+                  <select id="crypto-asset">
+                    <option value="BTC">Bitcoin (BTC)</option>
+                    <option value="LTC">Litecoin (LTC)</option>
+                    <option value="ADA">Cardano (ADA)</option>
+                    <option value="BNB">BNB</option>
+                    <option value="XRP">XRP</option>
+                    <option value="ETH">Ethereum (ETH)</option>
+                    <option value="SOL">Solana (SOL)</option>
+                    <option value="AVAX">Avalanche (AVAX)</option>
+                    <option value="DOGE">Dogecoin (DOGE)</option>
+                    <option value="SUI">Sui (SUI)</option>
+                    <option value="WLD">Worldcoin (WLD)</option>
+                    <option value="XLM">Stellar (XLM)</option>
+                  </select>
+                  <select id="commodity-asset" hidden disabled>
+                    <option value="Cobre">Cobre</option>
+                    <option value="Petróleo">Petróleo</option>
+                    <option value="Prata">Prata</option>
+                    <option value="Ouro">Ouro</option>
+                  </select>
+                  <select id="stock-asset" hidden disabled>
+                    <option value="APPLE">APPLE</option>
+                    <option value="NETFLIX">NETFLIX</option>
+                    <option value="META">META</option>
+                    <option value="TESLA">TESLA</option> 
+                    <option value="MICROSOFT">MICROSOFT</option>
+                    <option value="MCDONALDS">MCDONALDS</option>
+                    <option value="AMAZON">AMAZON</option>
+                    <option value="PAYPAL">PAYPAL</option>
+                    <option value="STARBUCKS">STARBUCKS</option>
+                    <option value="NVIDIA">NVIDIA</option>
+                    <option value="DISNEY">DISNEY</option>
+                    <option value="INTEL">INTEL</option>
+                    <option value="VISA">VISA</option>
+                    <option value="IBM">IBM</option>
+                    <option value="FORD">FORD</option>
+                    <option value="COCA-COLA">COCA-COLA</option>
+                    <option value="NIKE">NIKE</option>
+                    <option value="MASTERCARD">MASTERCARD</option>
+                    <option value="SPOTIFY">SPOTIFY</option>
+                    <option value="SPACEX">SPACEX</option>
+                    <option value="JPMORGAN">JPMORGAN</option>
+                    <option value="BANK OF AMERICA">BANK OF AMERICA</option>
+                    <option value="CITIGROUP">CITIGROUP</option>
+                    <option value="WELLS FARGO">WELLS FARGO</option>
+                    <option value="GOLDMAN SACHS">GOLDMAN SACHS</option>
+                    <option value="MORGAN STANLEY">MORGAN STANLEY</option>
+                  </select>
+                </label>
+
+                <label class="form-field">
+                  <span>Período do gráfico</span>
+                  <select id="timeframe" name="timeframe">
+                    <option value="">Não informado</option>
+                    <option value="1m">1 minuto</option>
+                    <option value="5m">5 minutos</option>
+                    <option value="15m">15 minutos</option>
+                    <option value="30m">30 minutos</option>
+                  </select>
+                </label>
+
+                <button class="primary-button" id="analyze-button" type="submit" disabled>
+                  <span>Analisar gráfico com IA</span>
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M5 12h14m-6-6 6 6-6 6" />
+                  </svg>
+                </button>
+                <p class="analysis-progress" id="analysis-progress" role="status" aria-live="polite" hidden></p>
+              </form>
+
+              <div class="disclaimer">
+                <span class="disclaimer-icon" aria-hidden="true">i</span>
+                <p>
+                 Nenhuma leitura visual é capaz de prever o mercado ou garantir resultados. Utilize nossas análises apenas como apoio educacional para seus estudos.
+                </p>
+              </div>
+            </section>
+          </div>
+
+          <section class="result-panel" id="analysis-result" aria-live="polite" aria-atomic="true" hidden>
+            <div class="result-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
+                <path d="M12 3 2.8 19h18.4L12 3Z" />
+                <path d="M12 9v4m0 3h.01" />
+              </svg>
+            </div>
+            <div>
+              <p class="result-eyebrow" id="result-eyebrow">ANÁLISE VISUAL</p>
+              <div class="result-title-row">
+                <h2 id="result-title">Conclusão visual da análise</h2>
+                <span class="direction-badge" id="result-direction" hidden></span>
+              </div>
+              <p class="result-description" id="result-description"></p>
+              <div class="result-details">
+                <p><strong>Tendência:</strong> <span id="result-trend"></span></p>
+                <p><strong>Price action:</strong> <span id="result-price-action"></span></p>
+                <p><strong>Níveis visíveis:</strong> <span id="result-levels"></span></p>
+              </div>
+              <div class="result-evidence" id="result-evidence" hidden>
+                <strong>O que aparece no gráfico</strong>
+                <ul id="result-reasons"></ul>
+              </div>
+              <p class="result-risk" id="result-risk"></p>
+              <p class="result-context" id="result-context"></p>
+              <div class="result-feedback" id="result-feedback" hidden>
+                <p class="feedback-question">Essa leitura correspondeu ao que o gráfico mostrou depois?</p>
+                <div class="feedback-actions">
+                  <button type="button" data-feedback="hit">Acertou</button>
+                  <button type="button" data-feedback="miss">Errou</button>
+                  <button type="button" data-feedback="invented_level">Nível inventado</button>
+                </div>
+                <p class="feedback-status" id="feedback-status" role="status" aria-live="polite"></p>
+              </div>
+            </div>
+          </section>
+
+          <footer class="page-footer">
+            <strong class="page-footer-brand">Criado por Operadores para Operadores.</strong>
+           
+            <span class="page-footer-note">Conteúdo educativo com base em leitura visual — não constitui recomendação financeira nem garantia de resultado.</span>
+          </footer>
+        </div>
+      </main>
+    </div>
+
+    <div
+      class="analysis-overlay"
+      id="analysis-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="overlay-title"
+      hidden
+    >
+      <div class="analysis-overlay-backdrop" aria-hidden="true"></div>
+      <div class="analysis-overlay-card" role="document">
+        <div class="overlay-scanner" aria-hidden="true">
+          <span class="overlay-ring"></span>
+          <span class="overlay-ring overlay-ring--inner"></span>
+          <span class="overlay-core">
+            <svg viewBox="0 0 24 24">
+              <path d="M4 17.5 9.5 11l4 3.2L20 6.5" />
+              <path d="M20 10.8V6.5h-4.3" />
+            </svg>
+          </span>
+        </div>
+
+        <p class="overlay-eyebrow">Análise em andamento</p>
+        <h2 class="overlay-title" id="overlay-title">Lendo o seu gráfico</h2>
+        <p class="overlay-step" id="overlay-step">Preparando e otimizando a imagem…</p>
+
+        <div class="overlay-flight" aria-hidden="true">
+          <svg viewBox="0 0 300 104" fill="none" role="presentation">
+            <defs>
+              <linearGradient id="flightTrailGradient" x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0%" stop-color="#16a34a" stop-opacity="0.1" />
+                <stop offset="55%" stop-color="#4ade80" stop-opacity="0.8" />
+                <stop offset="100%" stop-color="#bbf7d0" />
+              </linearGradient>
+            </defs>
+            <path class="flight-grid" d="M2 86H298M2 60H298M2 34H298" />
+            <path
+              id="flight-path"
+              class="flight-track"
+              d="M12 86 40 78 58 83 82 62 104 69 130 47 152 54 178 33 204 39 232 22 258 17 286 12"
+            />
+            <path
+              class="flight-trail"
+              stroke="url(#flightTrailGradient)"
+              d="M12 86 40 78 58 83 82 62 104 69 130 47 152 54 178 33 204 39 232 22 258 17 286 12"
+            />
+            <circle class="flight-target" cx="286" cy="12" r="9" />
+            <g class="flight-arrow">
+              <path d="M12 0-9-7.5-4 0-9 7.5Z" />
+              <animateMotion dur="2.9s" repeatCount="indefinite" rotate="auto">
+                <mpath href="#flight-path" />
+              </animateMotion>
+            </g>
+            <circle class="flight-spark" r="2.2">
+              <animateMotion dur="2.9s" begin="0.16s" repeatCount="indefinite" rotate="auto">
+                <mpath href="#flight-path" />
+              </animateMotion>
+              <animate
+                attributeName="opacity"
+                values="0;0.95;0"
+                dur="0.8s"
+                repeatCount="indefinite"
+              />
+            </circle>
+          </svg>
+        </div>
+
+        <div class="overlay-progress">
+          <span id="overlay-progress-bar" style="width: 10%"></span>
+        </div>
+        <ol class="overlay-steps" id="overlay-steps">
+          <li><span class="overlay-dot"></span>Imagem</li>
+          <li><span class="overlay-dot"></span>Estrutura</li>
+          <li><span class="overlay-dot"></span>Leitura</li>
+          <li><span class="overlay-dot"></span>Contrato</li>
+        </ol>
+        <p class="overlay-hint">Tempo decorrido: <span id="overlay-elapsed">0s</span></p>
+      </div>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,101 @@
+{
+  "image_class": "B",
+  "chart_type": "candlestick",
+  "price_axis_readable": true,
+  "price_axis_min": 1.3095,
+  "price_axis_max": 1.313,
+  "asset_visible": null,
+  "timeframe_visible": "5m",
+  "last_candle_status": "possibly_open",
+  "visual_quality": 72,
+  "analysis_coverage": 75,
+  "confidence": 55,
+  "direction": "NEUTRAL",
+  "directional_assessment": {
+    "buy_score": 55,
+    "sell_score": 50,
+    "buy_status": "weak",
+    "buy_evidence": [
+      "Fundo 1.30950 às 09:00 e fundo mais alto em 1.30995 às 13:30 mantêm a sequência de altas",
+      "Rejeição compradora às 13:30 com pavio inferior"
+    ],
+    "sell_status": "weak",
+    "sell_evidence": [
+      "Topo 1.31211 às 11:40 rejeitou duas tentativas de avanço",
+      "Recuo de 1.31211 até 1.30995 entre 11:40 e 13:30 sem novos topos"
+    ],
+    "selected_reason": "BUY conserva fundos ascendentes, mas não fechou acima de 1.31211; SELL tem rejeição no topo, porém não perdeu 1.30995. Com a vela mais à direita em formação e o nome do ativo cortado, nenhum lado prevalece."
+  },
+  "trend": {
+    "main": "lateralização",
+    "micro": "baixa",
+    "structure": [
+      "Fundo 1.30950 às 09:00",
+      "Topo 1.31211 às 11:40",
+      "Fundo 1.30995 às 13:30"
+    ],
+    "explanation": "O preço alterna entre 1.30950 e 1.31211 desde 09:00, com recuo recente de 1.31211 até 1.30995."
+  },
+  "price_action": {
+    "observations": [
+      "Impulso de 1.31000 até 1.31211 entre 10:00 e 11:40",
+      "Recuo até 1.30995 às 13:30 com corpos pequenos",
+      "Última vela ainda em formação, acima de 1.30995"
+    ],
+    "interpretations": [
+      "A alta perdeu continuidade no topo 1.31211",
+      "O fundo 1.30995 foi respeitado no recuo, sem candle de reversão amplo"
+    ],
+    "conditions": [
+      "Fechamento acima de 1.31211 confirmaria retomada compradora",
+      "Fechamento abaixo de 1.30950 confirmaria perda da lateralização"
+    ]
+  },
+  "levels": [
+    {
+      "type": "support",
+      "value": 1.30995,
+      "region": "fundo das 13:30",
+      "reason": "Reação compradora mais recente do recorte"
+    },
+    {
+      "type": "resistance",
+      "value": 1.31211,
+      "region": "topo das 11:40",
+      "reason": "Rejeitou duas tentativas de avanço desde 10:00"
+    }
+  ],
+  "patterns": [],
+  "indicators": [],
+  "volume": {
+    "visible": false,
+    "observations": [],
+    "interpretation": ""
+  },
+  "evidence_for": [
+    "Fundo 1.30995 respeitado no recuo mais recente"
+  ],
+  "evidence_against": [
+    "Topo 1.31211 rejeitou o preço e a alta perdeu continuidade"
+  ],
+  "signal_timing": {
+    "action": "WAIT",
+    "signal_candle": "possibly_open",
+    "entry_timing": "Aguardar o fechamento da vela em formação e uma reação em 1.30995 ou 1.31211.",
+    "exit_plan": "Sem posição; o plano condicional vale uma vela após um sinal confirmado.",
+    "holding_horizon": "Condicional: uma vela de 5 minutos após a confirmação.",
+    "confirmation_required": [
+      "Fechamento da vela mais à direita",
+      "Reação compradora em 1.30995 ou vendedora em 1.31211"
+    ],
+    "invalidation": [
+      "Fechamento abaixo de 1.30950"
+    ]
+  },
+  "conflict_notes": [],
+  "risk": [
+    "Vela mais à direita possivelmente em formação impede confirmar o sinal",
+    "O nome do ativo está cortado na captura, então a leitura vale pelo preço e pelo horário visíveis"
+  ],
+  "summary": "Leitura geral:\nO preço subiu de 1.30950 às 09:00 para 1.31211 às 11:40 e recuou para 1.30995 às 13:30, onde achou compradores. O intervalo entre os dois extremos se repete sem topos ou fundos novos, e a comparação entre BUY e SELL não aponta vencedor. A vela mais à direita está em formação.\n\nprice action:\nO impulso das 10:00 às 11:40 levou o preço a 1.31211, e o topo rejeitou duas tentativas de avanço. O recuo até 1.30995 teve corpos pequenos, sem candle de reversão amplo. A última vela segue aberta.\n\nniveis e zonas:\nO suporte em 1.30995 concentra a reação compradora mais recente. A resistência em 1.31211 limita o avanço desde 11:40. Entre as duas, o preço alterna sem direção definida.\n\nIndicadores e Volumes:\nNenhum painel de indicador ou de volume aparece na captura. A análise fica restrita a estrutura, pivôs e candles, sem leitura de momentum ou participação.\n\nCenario e invalidacao:\nBUY precisaria de fechamento acima de 1.31211; SELL, de perder 1.30995 com fechamento. Como nenhum ocorreu, a leitura fica em espera. A perda de 1.30950 com fechamento anularia a lateralização.\n\nLimitacoes:\nA vela em formação impede confirmar o sinal, e o nome do ativo não está legível. A captura também não mostra volume nem indicadores."
+}

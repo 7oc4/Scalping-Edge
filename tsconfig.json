@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "esnext",
+    "lib": ["ES2021", "DOM"],
+    "rootDir": "assets/ts",
+    "outDir": "assets/js",
+    "strict": false,
+    "noEmitOnError": true,
+    "removeComments": false,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["assets/ts/**/*.ts"]
+}

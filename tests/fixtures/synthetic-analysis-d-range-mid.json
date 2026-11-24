@@ -1,0 +1,100 @@
+{
+  "image_class": "A",
+  "chart_type": "candlestick",
+  "price_axis_readable": true,
+  "price_axis_min": 1.095,
+  "price_axis_max": 1.105,
+  "asset_visible": "EUR/USD",
+  "timeframe_visible": "15m",
+  "last_candle_status": "closed",
+  "visual_quality": 80,
+  "analysis_coverage": 85,
+  "confidence": 50,
+  "direction": "NEUTRAL",
+  "directional_assessment": {
+    "buy_score": 50,
+    "sell_score": 50,
+    "buy_status": "weak",
+    "buy_evidence": [
+      "Fundo 1.09500 às 10:15 recebeu reação compradora",
+      "Fundo 1.09530 às 14:45 manteve a borda inferior"
+    ],
+    "sell_status": "weak",
+    "sell_evidence": [
+      "Topo 1.10480 às 11:30 rejeitou o preço",
+      "Topo 1.10450 às 15:10 repetiu a venda na borda superior"
+    ],
+    "selected_reason": "A faixa entre 1.09500 e 1.10480 está bem definida, mas o preço está em 1.10020, no meio do range, longe dos dois extremos; nenhum lado tem rejeição confirmada na borda."
+  },
+  "trend": {
+    "main": "lateralização",
+    "micro": "lateralização",
+    "structure": [
+      "Suporte — 1.09500 — 10:15",
+      "Resistência — 1.10480 — 11:30",
+      "Fundo de reação — 1.09530 — 14:45"
+    ],
+    "explanation": "O preço alterna entre 1.09500 e 1.10480 desde 10:15, com reações nas duas bordas e sem progressão de topos ou fundos."
+  },
+  "price_action": {
+    "observations": [
+      "Rejeição compradora em 1.09500 às 10:15",
+      "Rejeição vendedora em 1.10480 às 11:30",
+      "Última vela fecha em 1.10020, no centro da faixa"
+    ],
+    "interpretations": [
+      "As duas bordas foram testadas e respeitadas dentro do recorte",
+      "A ausência de fechamento fora da faixa mantém o equilíbrio"
+    ],
+    "conditions": [
+      "Fechamento acima de 1.10480 confirmaria rompimento comprador",
+      "Fechamento abaixo de 1.09500 confirmaria rompimento vendedor"
+    ]
+  },
+  "levels": [
+    {
+      "type": "support",
+      "value": 1.095,
+      "region": "borda inferior da faixa",
+      "reason": "Duas reações compradoras visíveis, às 10:15 e 14:45"
+    },
+    {
+      "type": "resistance",
+      "value": 1.1048,
+      "region": "borda superior da faixa",
+      "reason": "Duas rejeições vendedoras visíveis, às 11:30 e 15:10"
+    }
+  ],
+  "patterns": [],
+  "indicators": [],
+  "volume": {
+    "visible": false,
+    "observations": [],
+    "interpretation": ""
+  },
+  "evidence_for": [
+    "Reações recorrentes nos dois extremos delimitam a faixa"
+  ],
+  "evidence_against": [
+    "O preço está no centro da faixa, longe de qualquer gatilho"
+  ],
+  "signal_timing": {
+    "action": "WAIT",
+    "signal_candle": "closed",
+    "entry_timing": "Aguardar aproximação e rejeição confirmada em 1.09500 ou 1.10480.",
+    "exit_plan": "Sem posição; o plano condicional vale uma vela após o sinal confirmado.",
+    "holding_horizon": "Condicional: uma vela de 15 minutos após a confirmação.",
+    "confirmation_required": [
+      "Fechamento além de uma das bordas da faixa"
+    ],
+    "invalidation": [
+      "Fechamento fora da faixa sem reação posterior de retorno"
+    ]
+  },
+  "conflict_notes": [],
+  "risk": [
+    "O preço está no meio do range, sem extremo testado no momento da captura",
+    "A captura não mostra volume nem indicadores"
+  ],
+  "summary": "Leitura geral:\nO preço alterna entre 1.09500 e 1.10480 desde 10:15, com reações nas duas bordas e cotação em 1.10020 às 15:30. A estrutura é de lateralização e o preço está no centro da faixa, longe dos extremos. A comparação entre BUY e SELL fica equilibrada, sem vencedor.\n\nprice action:\nO fundo 1.09500 recebeu compradores às 10:15 e foi respeitado às 14:45. O topo 1.10480 rejeitou o avanço às 11:30 e às 15:10. A última vela fechou no meio da faixa.\n\nniveis e zonas:\nO suporte em 1.09500 concentra duas reações compradoras. A resistência em 1.10480 concentra duas rejeições vendedoras. Entre as bordas, o preço não tem gatilho próximo.\n\nIndicadores e Volumes:\nNenhum painel de indicador ou de volume aparece na captura, então momentum e participação não foram avaliados.\n\nCenario e invalidacao:\nBUY precisaria de rejeição confirmada em 1.09500; SELL, de rejeição confirmada em 1.10480. Como o preço está no meio, não há cenário executável. Um fechamento fora da faixa sem retorno anularia a leitura de lateralização.\n\nLimitacoes:\nA cotação central não permite testar as bordas, e a captura não mostra volume nem indicadores."
+}

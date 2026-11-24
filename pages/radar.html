@@ -1,0 +1,318 @@
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Cotações em tempo real do TradingView, varredor de setups, plano de trade e cálculo de risco."
+    />
+    <meta name="theme-color" content="#080b0f" />
+    <title>Scalping Edge — Radar de mercado</title>
+    <link rel="stylesheet" href="../assets/css/style.css" />
+    <script src="../assets/js/pages.js" defer></script>
+    <script src="../assets/js/radar.js" defer></script>
+  </head>
+  <body>
+    <div class="startup-loader" id="startup-loader" role="status" aria-live="polite">
+      <span class="startup-loader-ring" aria-hidden="true"></span>
+      <span class="startup-loader-brand">SCALPING <strong>EDGE</strong></span>
+      <span class="startup-loader-caption">Preparando painel</span>
+    </div>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Navegação principal">
+        <a class="brand" href="/pages/index.html" aria-label="Scalping Edge, página inicial">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none">
+              <path d="M4 17.5 9 12l3.2 3.2L20 7" />
+              <path d="M14.5 7H20v5.5" />
+            </svg>
+          </span>
+          <span>Scalping<span class="brand-period"> Edge</span></span>
+        </a>
+
+        <p class="nav-caption">MENU</p>
+        <nav class="navigation">
+          <a class="nav-link" href="/pages/index.html">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h7v7H4zM13 4h7v4h-7zM13 10h7v10h-7zM4 13h7v7H4z" /></svg>
+            <span>Analisar print</span>
+          </a>
+          <a class="nav-link active" href="/pages/radar.html" aria-current="page">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" /><circle cx="12" cy="12" r="4" /><path d="M12 12 18.5 5.5" /></svg>
+            <span>Radar de mercado</span>
+          </a>
+          <a class="nav-link" href="/pages/noticias.html">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h13v14H5.5A1.5 1.5 0 0 1 4 17.5z" /><path d="M17 8h3v9a2 2 0 0 1-2 2h-1" /><path d="M7 9h7M7 12h7M7 15h4" /></svg>
+            <span>Notícias</span>
+          </a>
+          <a class="nav-link" href="/pages/historico.html">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 2.64-6.36L3 8" /><path d="M3 3v5h5m4-1v5l3 2" /></svg>
+            <span>Histórico</span>
+            <span class="history-count" id="history-count">0</span>
+          </a>
+        </nav>
+
+      </aside>
+
+      <main class="main-content" id="radar">
+        <header class="topbar">
+          <button
+            class="fullscreen-toggle"
+            id="fullscreen-toggle"
+            type="button"
+            aria-label="Entrar em tela cheia"
+            aria-pressed="false"
+            title="Entrar em tela cheia"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M8 3H5a2 2 0 0 0-2 2v3m13-5h3a2 2 0 0 1 2 2v3M3 16v3a2 2 0 0 0 2 2h3m13-5v3a2 2 0 0 1-2 2h-3" />
+            </svg>
+            <span>Tela cheia</span>
+          </button>
+          <span class="visually-hidden" id="fullscreen-status" role="status" aria-live="polite"></span>
+          <span class="local-status api-unstable" id="api-status" role="status" title="Verificando a conexão com a API">
+            <span aria-hidden="true"></span>
+            <span id="api-status-text">Verificando conexão</span>
+          </span>
+        </header>
+
+        <div class="page-content">
+          <section class="radar-section" id="radar" aria-labelledby="radar-title">
+            <div class="history-heading">
+              <div>
+                <p class="eyebrow">MESA DE OPERAÇÕES</p>
+                <h2 id="radar-title">Radar de mercado</h2>
+                <p class="history-description">
+                  Preços do TradingView em tempo real (cripto e moedas), relidos continuamente. Nenhum ativo com atraso entra na mesa: se a fonte não entrega o preço ao vivo, o ativo fica fora — e a tela mostra a hora da última leitura real.
+                </p>
+              </div>
+              <div class="radar-heading-actions">
+                <div class="radar-live" id="radar-live" data-state="idle">
+                  <span class="radar-dial" aria-hidden="true">
+                    <span class="radar-dial-ring"></span>
+                    <span class="radar-dial-ring radar-dial-ring--inner"></span>
+                    <span class="radar-dial-sweep"></span>
+                    <span class="radar-dial-blip"></span>
+                  </span>
+                  <span class="radar-live-copy">
+                    <strong id="radar-live-label">Conectando</strong>
+                    <span id="radar-live-meta">aguardando a primeira leitura</span>
+                  </span>
+                </div>
+                <button class="clear-history-button" id="radar-refresh" type="button">Atualizar</button>
+              </div>
+            </div>
+
+            <p class="radar-status" id="radar-status" role="status" aria-live="polite"></p>
+
+            <div class="live-tape" id="live-tape" aria-label="Cotações ao vivo do TradingView">
+              <div class="live-tape-track" id="live-tape-track">
+                <p class="live-tape-empty">Carregando cotações…</p>
+              </div>
+            </div>
+
+            <div class="radar-tabs" role="tablist" aria-label="Ferramentas de mercado">
+              <button type="button" role="tab" aria-selected="true" data-radar-tab="mercado">Mercado</button>
+              <button type="button" role="tab" aria-selected="false" data-radar-tab="grafico">Gráfico</button>
+              <button type="button" role="tab" aria-selected="false" data-radar-tab="varredor">Varredor</button>
+              <button type="button" role="tab" aria-selected="false" data-radar-tab="tempo">Máquina do tempo</button>
+              <button type="button" role="tab" aria-selected="false" data-radar-tab="plano">Entrada e saída</button>
+              <button type="button" role="tab" aria-selected="false" data-radar-tab="risco">Cálculo de risco</button>
+            </div>
+
+            <div class="radar-panel" data-radar-panel="mercado" role="tabpanel">
+              <div class="market-groups" id="market-groups">
+                <p class="radar-placeholder">Abra o radar para carregar as cotações.</p>
+              </div>
+            </div>
+
+            <div class="radar-panel" data-radar-panel="grafico" role="tabpanel" hidden>
+              <div class="chart-toolbar">
+                <label class="form-field chart-symbol-field">
+                  <span>Ativo</span>
+                  <select id="chart-symbol"></select>
+                </label>
+                <div class="chart-segments">
+                  <div class="chart-segment" id="chart-intervals" role="group" aria-label="Período do gráfico">
+                    <button type="button" data-chart-interval="5m">5m</button>
+                    <button type="button" data-chart-interval="15m">15m</button>
+                    <button type="button" data-chart-interval="1h">1h</button>
+                    <button type="button" data-chart-interval="1d">1D</button>
+                  </div>
+                  <div class="chart-segment" id="chart-types" role="group" aria-label="Tipo de gráfico">
+                    <button type="button" data-chart-type="area">Área</button>
+                    <button type="button" data-chart-type="candles">Velas</button>
+                  </div>
+                  <button class="chart-toggle" id="chart-ema" type="button" aria-pressed="false">EMA 9/21</button>
+                </div>
+                <button class="radar-action" id="chart-refresh" type="button">Atualizar</button>
+              </div>
+
+              <div class="chart-card" id="chart-card">
+                <div class="chart-head">
+                  <div class="chart-head-main">
+                    <strong id="chart-label">—</strong>
+                    <span class="chart-price" id="chart-price">—</span>
+                    <span class="chart-change" id="chart-change"></span>
+                  </div>
+                  <div class="chart-badges" id="chart-badges"></div>
+                </div>
+                <div class="chart-stage" id="chart-stage">
+                  <svg class="chart-svg" id="chart-svg" viewBox="0 0 1000 380" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Gráfico de preços"></svg>
+                  <div class="chart-tooltip" id="chart-tooltip" hidden></div>
+                  <div class="chart-skeleton" id="chart-skeleton" hidden>
+                    <span></span><span></span><span></span>
+                  </div>
+                </div>
+                <p class="chart-status" id="chart-status" role="status" aria-live="polite"></p>
+                <p class="chart-note" id="chart-note"></p>
+              </div>
+            </div>
+
+            <div class="radar-panel" data-radar-panel="varredor" role="tabpanel" hidden>
+              <div class="radar-toolbar">
+                <p>Varre a watchlist de 8 ativos em tempo real, em candles de 5 minutos, e ranqueia os setups mais claros do momento.</p>
+                <div class="scanner-actions">
+                  <div class="radar-live radar-live--compact" id="scanner-live" data-state="idle">
+                    <span class="radar-dial radar-dial--compact" aria-hidden="true">
+                      <span class="radar-dial-ring"></span>
+                      <span class="radar-dial-ring radar-dial-ring--inner"></span>
+                      <span class="radar-dial-sweep"></span>
+                      <span class="radar-dial-blip"></span>
+                    </span>
+                    <span class="radar-live-copy">
+                      <strong id="scanner-live-label">Pronto para varrer</strong>
+                      <span id="scanner-live-meta">nenhuma busca em andamento</span>
+                    </span>
+                  </div>
+                  <button class="radar-action" id="scanner-run" type="button">Varrer agora</button>
+                </div>
+              </div>
+              <div class="scanner-summary" id="scanner-summary"></div>
+              <div class="scanner-filters" id="scanner-filters" role="group" aria-label="Filtrar varredura por sinal"></div>
+              <p class="radar-status" id="scanner-status" role="status" aria-live="polite"></p>
+              <div class="scanner-list" id="scanner-list"></div>
+            </div>
+
+            <div class="radar-panel" data-radar-panel="tempo" role="tabpanel" hidden>
+              <p class="radar-note">
+                Pega 60 dias de candles de 5 minutos, opera o cruzamento das EMAs 9/21 com stop e alvo por ATR
+                e reamostra os trades 10.000 vezes. É uma simulação educativa do passado — não é previsão
+                nem recomendação, e não inclui custos, spread ou slippage.
+              </p>
+              <div class="radar-form">
+                <label class="form-field">
+                  <span>Ativo</span>
+                  <select id="backtest-symbol"></select>
+                </label>
+                <button class="radar-action" id="backtest-run" type="button">Rodar simulação</button>
+              </div>
+              <p class="radar-status" id="backtest-status" role="status" aria-live="polite"></p>
+              <div class="backtest-timeline" id="backtest-timeline" hidden>
+                <div class="backtest-timeline-head">
+                  <strong id="backtest-phase">Baixando o histórico real…</strong>
+                  <span class="backtest-elapsed" id="backtest-elapsed">0,0 s</span>
+                </div>
+                <div class="backtest-rails" aria-hidden="true">
+                  <span class="backtest-rail" data-backtest-rail="candles"><i></i></span>
+                  <span class="backtest-rail" data-backtest-rail="trades"><i></i></span>
+                  <span class="backtest-rail" data-backtest-rail="simulations"><i></i></span>
+                </div>
+                <div class="backtest-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="backtest-progress">
+                  <span class="backtest-progress-fill" id="backtest-progress-fill"></span>
+                </div>
+                <div class="backtest-counters">
+                  <span><b id="backtest-counter">0</b> <span id="backtest-counter-label">candles lidos</span></span>
+                  <span><b id="backtest-trades">0</b> trades encontrados</span>
+                  <span class="backtest-phase-tag" id="backtest-phase-tag">histórico</span>
+                </div>
+              </div>
+              <div class="radar-result" id="backtest-result" hidden></div>
+            </div>
+
+            <div class="radar-panel" data-radar-panel="plano" role="tabpanel" hidden>
+              <p class="radar-note">
+                Entrada, stop e alvo calculados com ATR(14) e o swing dos últimos 20 candles de 5 minutos.
+                Ajuste ao seu gerenciamento antes de operar.
+              </p>
+              <div class="radar-form">
+                <label class="form-field">
+                  <span>Ativo</span>
+                  <select id="plan-symbol"></select>
+                </label>
+                <button class="radar-action" id="plan-run" type="button">Montar plano</button>
+              </div>
+              <p class="radar-status" id="plan-status" role="status" aria-live="polite"></p>
+              <div class="radar-result" id="plan-result" hidden></div>
+            </div>
+
+            <div class="radar-panel" data-radar-panel="risco" role="tabpanel" hidden>
+              <p class="radar-note">
+                Calcula o tamanho da posição para você não perder mais que o risco definido se o stop for atingido.
+              </p>
+              <form class="risk-form" id="risk-form">
+                <label class="form-field">
+                  <span>Saldo da conta</span>
+                  <div class="risk-control">
+                    <input id="risk-balance" type="number" min="1" step="0.01" value="1000" />
+                    <span class="risk-steppers">
+                      <button class="step-button" type="button" data-step-target="risk-balance" data-step-dir="up" aria-label="Aumentar saldo da conta"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 14 6-6 6 6" /></svg></button>
+                      <button class="step-button" type="button" data-step-target="risk-balance" data-step-dir="down" aria-label="Diminuir saldo da conta"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 10 6 6 6-6" /></svg></button>
+                    </span>
+                  </div>
+                </label>
+                <label class="form-field">
+                  <span>Risco por operação (%)</span>
+                  <div class="risk-control">
+                    <input id="risk-percent" type="number" min="0.1" max="100" step="0.1" value="1" />
+                    <span class="risk-steppers">
+                      <button class="step-button" type="button" data-step-target="risk-percent" data-step-dir="up" aria-label="Aumentar risco por operação"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 14 6-6 6 6" /></svg></button>
+                      <button class="step-button" type="button" data-step-target="risk-percent" data-step-dir="down" aria-label="Diminuir risco por operação"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 10 6 6 6-6" /></svg></button>
+                    </span>
+                  </div>
+                </label>
+                <label class="form-field">
+                  <span>Entrada</span>
+                  <div class="risk-control">
+                    <input id="risk-entry" type="number" step="0.000001" value="100" />
+                    <span class="risk-steppers">
+                      <button class="step-button" type="button" data-step-target="risk-entry" data-step-dir="up" aria-label="Aumentar entrada"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 14 6-6 6 6" /></svg></button>
+                      <button class="step-button" type="button" data-step-target="risk-entry" data-step-dir="down" aria-label="Diminuir entrada"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 10 6 6 6-6" /></svg></button>
+                    </span>
+                  </div>
+                </label>
+                <label class="form-field">
+                  <span>Stop</span>
+                  <div class="risk-control">
+                    <input id="risk-stop" type="number" step="0.000001" value="98" />
+                    <span class="risk-steppers">
+                      <button class="step-button" type="button" data-step-target="risk-stop" data-step-dir="up" aria-label="Aumentar stop"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 14 6-6 6 6" /></svg></button>
+                      <button class="step-button" type="button" data-step-target="risk-stop" data-step-dir="down" aria-label="Diminuir stop"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 10 6 6 6-6" /></svg></button>
+                    </span>
+                  </div>
+                </label>
+                <label class="form-field">
+                  <span>Alvo (opcional)</span>
+                  <div class="risk-control">
+                    <input id="risk-target" type="number" step="0.000001" value="104" />
+                    <span class="risk-steppers">
+                      <button class="step-button" type="button" data-step-target="risk-target" data-step-dir="up" aria-label="Aumentar alvo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 14 6-6 6 6" /></svg></button>
+                      <button class="step-button" type="button" data-step-target="risk-target" data-step-dir="down" aria-label="Diminuir alvo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 10 6 6 6-6" /></svg></button>
+                    </span>
+                  </div>
+                </label>
+                <button class="radar-action" type="submit">Calcular posição</button>
+              </form>
+              <p class="radar-status" id="risk-status" role="status" aria-live="polite"></p>
+              <div class="radar-result" id="risk-result" hidden></div>
+            </div>
+          </section>
+
+          <footer class="page-footer">
+            <strong class="page-footer-brand">Criado por Operadores para Operadores.</strong>
+           
+            <span class="page-footer-note">Conteúdo educativo com base em leitura visual — não constitui recomendação financeira nem garantia de resultado.</span>
+          </footer>
+        </div>
+      </main>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,102 @@
+{
+  "image_class": "A",
+  "chart_type": "candlestick",
+  "price_axis_readable": true,
+  "price_axis_min": 1.3095,
+  "price_axis_max": 1.313,
+  "asset_visible": null,
+  "timeframe_visible": "5m",
+  "last_candle_status": "closed",
+  "visual_quality": 78,
+  "analysis_coverage": 90,
+  "confidence": 60,
+  "direction": "NEUTRAL",
+  "directional_assessment": {
+    "buy_score": 70,
+    "sell_score": 65,
+    "buy_status": "supported",
+    "buy_evidence": [
+      "Fundo 1.30995 às 13:30 manteve a sequência de altas",
+      "Fechamento acima de 1.31100 às 14:05"
+    ],
+    "sell_status": "weak",
+    "sell_evidence": [
+      "Topo 1.31211 às 11:40 rejeitou duas tentativas",
+      "Pavio superior amplo na vela das 14:20"
+    ],
+    "selected_reason": "BUY mantém fundos ascendentes, mas a rejeição no topo 1.31211 cria conflito com a continuidade; não há lado suficientemente sustentado para operar."
+  },
+  "trend": {
+    "main": "alta",
+    "micro": "lateralização",
+    "structure": [
+      "HL — 1.30950 — 09:00",
+      "HH — 1.31211 — 11:40",
+      "HL — 1.30995 — 13:30"
+    ],
+    "explanation": "A estrutura principal segue com fundos ascendentes, mas o topo 1.31211 não foi superado e a microestrutura alterna desde 11:40."
+  },
+  "price_action": {
+    "observations": [
+      "Fundo 1.30995 respeitado às 13:30",
+      "Fechamento em 1.31100 às 14:05",
+      "Pavio superior amplo em 1.31211 às 14:20"
+    ],
+    "interpretations": [
+      "A compra perde força na região de 1.31211",
+      "A estrutura de fundos ascendentes continua válida"
+    ],
+    "conditions": [
+      "Fechamento acima de 1.31211 resolveria o conflito a favor de BUY",
+      "Fechamento abaixo de 1.30950 resolveria o conflito a favor de SELL"
+    ]
+  },
+  "levels": [
+    {
+      "type": "support",
+      "value": 1.30995,
+      "region": "fundo das 13:30",
+      "reason": "Reação compradora mais recente"
+    },
+    {
+      "type": "resistance",
+      "value": 1.31211,
+      "region": "topo das 11:40",
+      "reason": "Rejeitou duas tentativas de avanço"
+    }
+  ],
+  "patterns": [],
+  "indicators": [],
+  "volume": {
+    "visible": false,
+    "observations": [],
+    "interpretation": ""
+  },
+  "evidence_for": [
+    "Fundos ascendentes preservados em 1.30950 e 1.30995"
+  ],
+  "evidence_against": [
+    "Topo 1.31211 rejeitou o avanço e trava a continuidade"
+  ],
+  "signal_timing": {
+    "action": "WAIT",
+    "signal_candle": "closed",
+    "entry_timing": "Aguardar a resolução do conflito entre 1.30995 e 1.31211.",
+    "exit_plan": "Sem posição; o plano condicional vale uma vela após a resolução.",
+    "holding_horizon": "Condicional: uma vela de 5 minutos após a confirmação.",
+    "confirmation_required": [
+      "Fechamento além de 1.31211 ou abaixo de 1.30950"
+    ],
+    "invalidation": [
+      "Fechamento abaixo de 1.30950 anula o viés comprador"
+    ]
+  },
+  "conflict_notes": [
+    "Estrutura de fundos ascendentes contra rejeição repetida em 1.31211; os dois lados têm evidência visível"
+  ],
+  "risk": [
+    "Conflito entre tendência principal e rejeição no topo impede escolher um lado",
+    "A captura não mostra volume nem indicadores"
+  ],
+  "summary": "Leitura geral:\nO preço subiu de 1.30950 às 09:00 para 1.31211 às 11:40 e recuou para 1.30995 às 13:30, com fechamento em 1.31100 às 14:05. A estrutura principal mantém fundos ascendentes, mas o topo 1.31211 segue intacto. A comparação entre BUY e SELL termina em conflito não resolvido.\n\nprice action:\nO fundo 1.30995 foi respeitado às 13:30 e o preço fechou em 1.31100 às 14:05. A tentativa seguinte encontrou pavio superior amplo em 1.31211 às 14:20. A compra perde força na região do topo.\n\nniveis e zonas:\nO suporte em 1.30995 sustenta a leitura compradora. A resistência em 1.31211 limita o avanço desde 11:40. O preço opera entre as duas regiões.\n\nIndicadores e Volumes:\nNenhum painel de indicador ou de volume aparece na captura, então momentum e participação não foram avaliados.\n\nCenario e invalidacao:\nBUY precisaria de fechamento acima de 1.31211; SELL, de fechamento abaixo de 1.30950. Como nenhum ocorreu, os dois cenários ficam em espera. A perda de 1.30950 com fechamento anularia o viés comprador.\n\nLimitacoes:\nO conflito entre estrutura e rejeição não foi resolvido na captura, e não há volume nem indicadores visíveis."
+}

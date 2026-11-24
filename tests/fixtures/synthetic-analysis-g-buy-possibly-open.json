@@ -1,0 +1,100 @@
+{
+  "image_class": "A",
+  "chart_type": "candlestick",
+  "price_axis_readable": true,
+  "price_axis_min": 1.3095,
+  "price_axis_max": 1.313,
+  "asset_visible": "GBP/USD",
+  "timeframe_visible": "5m",
+  "last_candle_status": "possibly_open",
+  "visual_quality": 82,
+  "analysis_coverage": 85,
+  "confidence": 70,
+  "direction": "BUY",
+  "directional_assessment": {
+    "buy_score": 80,
+    "sell_score": 55,
+    "buy_status": "supported",
+    "buy_evidence": [
+      "Fundo 1.30995 às 13:30 manteve a sequência de altas",
+      "Fechamento acima de 1.31100 às 14:05 confirmou a quebra do topo local"
+    ],
+    "sell_status": "weak",
+    "sell_evidence": [
+      "Topo 1.31211 às 11:40 rejeitou o primeiro avanço",
+      "Pavio superior curto na vela das 14:20"
+    ],
+    "selected_reason": "BUY tem fundos ascendentes e fechamento confirmado acima de 1.31100; a vela mais à direita ainda pode estar aberta, então a execução fica em espera."
+  },
+  "trend": {
+    "main": "alta",
+    "micro": "alta",
+    "structure": [
+      "HL — 1.30950 — 09:00",
+      "HH — 1.31211 — 11:40",
+      "HL — 1.30995 — 13:30"
+    ],
+    "explanation": "Fundos ascendentes e quebra do topo local às 14:05 sustentam a tendência de alta no recorte."
+  },
+  "price_action": {
+    "observations": [
+      "Fundo 1.30995 respeitado às 13:30",
+      "Fechamento em 1.31100 às 14:05 acima do topo local",
+      "Última vela desenhada até a borda direita, sem contador de fechamento"
+    ],
+    "interpretations": [
+      "A compra recuperou o controle após o recuo",
+      "O fechamento da última vela ainda não pode ser confirmado"
+    ],
+    "conditions": [
+      "Fechamento acima de 1.31100 manteria o cenário comprador",
+      "Perda de 1.30995 enfraqueceria a estrutura"
+    ]
+  },
+  "levels": [
+    {
+      "type": "support",
+      "value": 1.30995,
+      "region": "fundo das 13:30",
+      "reason": "Reação compradora mais recente"
+    },
+    {
+      "type": "resistance",
+      "value": 1.31211,
+      "region": "topo das 11:40",
+      "reason": "Primeiro teste vendedor do recorte"
+    }
+  ],
+  "patterns": [],
+  "indicators": [],
+  "volume": {
+    "visible": false,
+    "observations": [],
+    "interpretation": ""
+  },
+  "evidence_for": [
+    "Fundo 1.30995 preservado e fechamento acima de 1.31100"
+  ],
+  "evidence_against": [
+    "Topo 1.31211 ainda não foi superado"
+  ],
+  "signal_timing": {
+    "action": "WAIT",
+    "signal_candle": "possibly_open",
+    "entry_timing": "Aguardar o fechamento da vela em formação acima de 1.31100.",
+    "exit_plan": "Sem posição; o plano condicional vale uma vela após o fechamento confirmado.",
+    "holding_horizon": "Condicional: uma vela de 5 minutos após a confirmação.",
+    "confirmation_required": [
+      "Fechamento da vela mais à direita acima de 1.31100"
+    ],
+    "invalidation": [
+      "Fechamento abaixo de 1.31000 anula o viés comprador"
+    ]
+  },
+  "conflict_notes": [],
+  "risk": [
+    "A vela mais à direita pode estar em formação, impedindo confirmar a entrada",
+    "A captura não mostra volume nem indicadores"
+  ],
+  "summary": "Leitura geral:\nO preço subiu de 1.30950 às 09:00 para 1.31211 às 11:40, recuou para 1.30995 às 13:30 e fechou em 1.31100 às 14:05. A estrutura mantém fundos ascendentes e o fechamento recuperou o topo local. O viés favorece BUY, mas a última vela pode estar aberta.\n\nprice action:\nO fundo 1.30995 foi respeitado às 13:30 e o fechamento de 1.31100 às 14:05 superou o topo local. A vela seguinte avançou até a borda direita sem confirmação de fechamento. O recuo não perdeu a estrutura.\n\nniveis e zonas:\nO suporte em 1.30995 sustenta a leitura compradora. A resistência em 1.31211 é o próximo teste relevante. O preço opera entre as duas regiões.\n\nIndicadores e Volumes:\nNenhum painel de indicador ou de volume aparece na captura, então momentum e participação não foram avaliados.\n\nCenario e invalidacao:\nBUY precisa de fechamento confirmado acima de 1.31100 para executar; enquanto a vela estiver em formação, a ação fica em espera. Um fechamento abaixo de 1.31000 anularia o viés comprador.\n\nLimitacoes:\nO estado de fechamento da última vela não é verificável, e não há volume nem indicadores visíveis."
+}

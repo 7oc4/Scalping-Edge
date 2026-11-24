@@ -1,0 +1,114 @@
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Prints e análises salvas neste navegador, com resultados e evidências."
+    />
+    <meta name="theme-color" content="#080b0f" />
+    <title>Scalping Edge — Histórico</title>
+    <link rel="stylesheet" href="../assets/css/style.css" />
+    <script src="../assets/js/pages.js" defer></script>
+    <script src="../assets/js/history-page.js" defer></script>
+  </head>
+  <body>
+    <div class="startup-loader" id="startup-loader" role="status" aria-live="polite">
+      <span class="startup-loader-ring" aria-hidden="true"></span>
+      <span class="startup-loader-brand">SCALPING <strong>EDGE</strong></span>
+      <span class="startup-loader-caption">Preparando painel</span>
+    </div>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Navegação principal">
+        <a class="brand" href="/pages/index.html" aria-label="Scalping Edge, página inicial">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none">
+              <path d="M4 17.5 9 12l3.2 3.2L20 7" />
+              <path d="M14.5 7H20v5.5" />
+            </svg>
+          </span>
+          <span>Scalping<span class="brand-period"> Edge</span></span>
+        </a>
+
+        <p class="nav-caption">MENU</p>
+        <nav class="navigation">
+          <a class="nav-link" href="/pages/index.html">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h7v7H4zM13 4h7v4h-7zM13 10h7v10h-7zM4 13h7v7H4z" /></svg>
+            <span>Analisar print</span>
+          </a>
+          <a class="nav-link" href="/pages/radar.html">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" /><circle cx="12" cy="12" r="4" /><path d="M12 12 18.5 5.5" /></svg>
+            <span>Radar de mercado</span>
+          </a>
+          <a class="nav-link" href="/pages/noticias.html">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h13v14H5.5A1.5 1.5 0 0 1 4 17.5z" /><path d="M17 8h3v9a2 2 0 0 1-2 2h-1" /><path d="M7 9h7M7 12h7M7 15h4" /></svg>
+            <span>Notícias</span>
+          </a>
+          <a class="nav-link active" href="/pages/historico.html" aria-current="page">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 2.64-6.36L3 8" /><path d="M3 3v5h5m4-1v5l3 2" /></svg>
+            <span>Histórico</span>
+            <span class="history-count" id="history-count">0</span>
+          </a>
+        </nav>
+
+      </aside>
+
+      <main class="main-content" id="historico">
+        <header class="topbar">
+          <button
+            class="fullscreen-toggle"
+            id="fullscreen-toggle"
+            type="button"
+            aria-label="Entrar em tela cheia"
+            aria-pressed="false"
+            title="Entrar em tela cheia"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M8 3H5a2 2 0 0 0-2 2v3m13-5h3a2 2 0 0 1 2 2v3M3 16v3a2 2 0 0 0 2 2h3m13-5v3a2 2 0 0 1-2 2h-3" />
+            </svg>
+            <span>Tela cheia</span>
+          </button>
+          <span class="visually-hidden" id="fullscreen-status" role="status" aria-live="polite"></span>
+          <span class="local-status api-unstable" id="api-status" role="status" title="Verificando a conexão com a API">
+            <span aria-hidden="true"></span>
+            <span id="api-status-text">Verificando conexão</span>
+          </span>
+        </header>
+
+        <div class="page-content">
+          <section class="history-section" id="historico" aria-labelledby="history-title">
+            <div class="history-heading">
+              <div>
+                <p class="eyebrow">SEU ESPAÇO</p>
+                <h2 id="history-title">Histórico de análises</h2>
+                <p class="history-description">Seus prints e resultados ficam salvos neste navegador.</p>
+              </div>
+              <button class="clear-history-button" id="clear-history" type="button" hidden>
+                Limpar histórico
+              </button>
+            </div>
+            <p class="history-storage-note">As imagens e análises ficam neste navegador, neste computador.</p>
+            <p class="history-status" id="history-status" role="status" aria-live="polite"></p>
+            <div class="history-grid" id="history-list"></div>
+            <div class="history-empty" id="history-empty">
+              <span class="history-empty-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24">
+                  <path d="M3 12a9 9 0 1 0 2.64-6.36L3 8" />
+                  <path d="M3 3v5h5m4-1v5l3 2" />
+                </svg>
+              </span>
+              <strong>Nenhuma análise salva ainda</strong>
+              <p>Depois de analisar um gráfico, o print e o resultado aparecerão aqui.</p>
+            </div>
+          </section>
+
+
+          <footer class="page-footer">
+            <strong class="page-footer-brand">Criado por Operadores para Operadores.</strong>
+           
+            <span class="page-footer-note">Conteúdo educativo com base em leitura visual — não constitui recomendação financeira nem garantia de resultado.</span>
+          </footer>
+        </div>
+      </main>
+    </div>
+  </body>
+</html>
