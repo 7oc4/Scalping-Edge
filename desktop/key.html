@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'none';"
+    />
+    <title>Configurar Scalping Edge</title>
+    <link rel="stylesheet" href="./key.css" />
+    <script src="./key.js" defer></script>
+  </head>
+  <body>
+    <main class="key-card">
+      <div class="brand-mark" aria-hidden="true">SE</div>
+      <p class="eyebrow">SCALPING EDGE</p>
+      <h1>Conecte sua chave OpenAI</h1>
+      <p class="description">
+        A chave é usada apenas pelo servidor local durante esta sessão. Ela não é
+        salva pelo aplicativo.
+      </p>
+      <form id="key-form">
+        <label for="api-key">Chave da API</label>
+        <input
+          id="api-key"
+          name="api-key"
+          type="password"
+          autocomplete="off"
+          autocapitalize="off"
+          spellcheck="false"
+          required
+          autofocus
+        />
+        <p id="key-error" role="alert" aria-live="polite"></p>
+        <button type="submit">Iniciar aplicativo</button>
+      </form>
+      <button class="cancel-button" id="cancel-button" type="button">Cancelar</button>
+      <p class="help">Crie uma chave em platform.openai.com/api-keys</p>
+    </main>
+  </body>
+</html>

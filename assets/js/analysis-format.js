@@ -303,7 +303,9 @@ function normalizeAnalysisPayload(payload) {
       ...payload.signal_timing.confirmation_required.map((condition) => `Confirmação pendente: ${condition}`),
       ...payload.signal_timing.invalidation.map((condition) => `Invalidação: ${condition}`),
     ],
-    risk: payload.risk.join(" "),
+    risk: payload.risk.length > 0
+      ? payload.risk.join(" ")
+      : "Nenhuma limitacao especifica foi registrada.",
     conflict_notes: payload.conflict_notes.join(" "),
     signal_timing_text: timingText,
   };

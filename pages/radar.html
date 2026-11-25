@@ -8,12 +8,14 @@
     <meta name="theme-color" content="#080b0f" />
     <title>Scalping Edge — Radar de mercado</title>
     <link rel="stylesheet" href="../assets/css/style.css" />
+    <link rel="stylesheet" href="../assets/build/react-islands.css" />
     <script src="../assets/js/pages.js" defer></script>
     <script src="../assets/js/radar.js" defer></script>
+    <script src="../assets/js/brave-fx.js" defer></script>
   </head>
   <body>
     <div class="startup-loader" id="startup-loader" role="status" aria-live="polite">
-      <span class="startup-loader-ring" aria-hidden="true"></span>
+      <span id="splash-loader-root" aria-hidden="true"></span>
       <span class="startup-loader-brand">SCALPING <strong>EDGE</strong></span>
       <span class="startup-loader-caption">Preparando painel</span>
     </div>
@@ -54,6 +56,7 @@
 
       <main class="main-content" id="radar">
         <header class="topbar">
+          <div id="market-ticker-root" class="min-w-0 flex-1"></div>
           <button
             class="fullscreen-toggle"
             id="fullscreen-toggle"
@@ -81,7 +84,7 @@
                 <p class="eyebrow">MESA DE OPERAÇÕES</p>
                 <h2 id="radar-title">Radar de mercado</h2>
                 <p class="history-description">
-                  Preços do TradingView em tempo real (cripto e moedas), relidos continuamente. Nenhum ativo com atraso entra na mesa: se a fonte não entrega o preço ao vivo, o ativo fica fora — e a tela mostra a hora da última leitura real.
+                  TradingView · cripto e moedas. Só entram cotações sem atraso; o horário indica a última leitura da fonte.
                 </p>
               </div>
               <div class="radar-heading-actions">
@@ -113,7 +116,7 @@
               <button type="button" role="tab" aria-selected="true" data-radar-tab="mercado">Mercado</button>
               <button type="button" role="tab" aria-selected="false" data-radar-tab="grafico">Gráfico</button>
               <button type="button" role="tab" aria-selected="false" data-radar-tab="varredor">Varredor</button>
-              <button type="button" role="tab" aria-selected="false" data-radar-tab="tempo">Máquina do tempo</button>
+              <button type="button" role="tab" aria-selected="false" data-radar-tab="tempo">Backtest</button>
               <button type="button" role="tab" aria-selected="false" data-radar-tab="plano">Entrada e saída</button>
               <button type="button" role="tab" aria-selected="false" data-radar-tab="risco">Cálculo de risco</button>
             </div>
@@ -169,7 +172,7 @@
 
             <div class="radar-panel" data-radar-panel="varredor" role="tabpanel" hidden>
               <div class="radar-toolbar">
-                <p>Varre a watchlist de 8 ativos em tempo real, em candles de 5 minutos, e ranqueia os setups mais claros do momento.</p>
+                <p>Varredura técnica em candles de 5 min. Após a primeira leitura, preço e setup são reconsultados em intervalos mínimos de 2 s, conforme a resposta da fonte; ativos sem cotação ao vivo ficam fora.</p>
                 <div class="scanner-actions">
                   <div class="radar-live radar-live--compact" id="scanner-live" data-state="idle">
                     <span class="radar-dial radar-dial--compact" aria-hidden="true">
@@ -193,22 +196,23 @@
             </div>
 
             <div class="radar-panel" data-radar-panel="tempo" role="tabpanel" hidden>
-              <p class="radar-note">
-                Pega 60 dias de candles de 5 minutos, opera o cruzamento das EMAs 9/21 com stop e alvo por ATR
-                e reamostra os trades 10.000 vezes. É uma simulação educativa do passado — não é previsão
-                nem recomendação, e não inclui custos, spread ou slippage.
+              <p class="radar-note backtest-note">
+                <span class="backtest-note-label">PROTOCOLO</span>
+                <span class="backtest-note-main">Yahoo Finance · 60 dias · candles de 5 min · EMA 9/21 · stop e alvo por ATR</span>
+                <span class="backtest-note-disclaimer">Reamostragem histórica, não previsão. Custos, spread e slippage não modelados.</span>
               </p>
               <div class="radar-form">
                 <label class="form-field">
-                  <span>Ativo</span>
+                  <span>Ativo do teste</span>
                   <select id="backtest-symbol"></select>
                 </label>
-                <button class="radar-action" id="backtest-run" type="button">Rodar simulação</button>
+                <button class="radar-action" id="backtest-run" type="button">Executar backtest</button>
+                <button class="radar-action" id="backtest-sweep" type="button">Comparar mercados</button>
               </div>
               <p class="radar-status" id="backtest-status" role="status" aria-live="polite"></p>
               <div class="backtest-timeline" id="backtest-timeline" hidden>
                 <div class="backtest-timeline-head">
-                  <strong id="backtest-phase">Baixando o histórico real…</strong>
+                  <strong id="backtest-phase">Carregando candles históricos…</strong>
                   <span class="backtest-elapsed" id="backtest-elapsed">0,0 s</span>
                 </div>
                 <div class="backtest-rails" aria-hidden="true">
@@ -221,7 +225,7 @@
                 </div>
                 <div class="backtest-counters">
                   <span><b id="backtest-counter">0</b> <span id="backtest-counter-label">candles lidos</span></span>
-                  <span><b id="backtest-trades">0</b> trades encontrados</span>
+                  <span><b id="backtest-trades">0</b> operações encerradas</span>
                   <span class="backtest-phase-tag" id="backtest-phase-tag">histórico</span>
                 </div>
               </div>
@@ -230,8 +234,7 @@
 
             <div class="radar-panel" data-radar-panel="plano" role="tabpanel" hidden>
               <p class="radar-note">
-                Entrada, stop e alvo calculados com ATR(14) e o swing dos últimos 20 candles de 5 minutos.
-                Ajuste ao seu gerenciamento antes de operar.
+                Plano por ATR(14) e swing dos últimos 20 candles de 5 min. Referência técnica; valide no gráfico antes de usar.
               </p>
               <div class="radar-form">
                 <label class="form-field">
@@ -246,73 +249,92 @@
 
             <div class="radar-panel" data-radar-panel="risco" role="tabpanel" hidden>
               <p class="radar-note">
-                Calcula o tamanho da posição para você não perder mais que o risco definido se o stop for atingido.
+                Dimensiona a posição pelo risco definido. A amostra opcional reúne até 50 operações históricas encerradas; não projeta resultados futuros.
               </p>
-              <form class="risk-form" id="risk-form">
-                <label class="form-field">
-                  <span>Saldo da conta</span>
-                  <div class="risk-control">
-                    <input id="risk-balance" type="number" min="1" step="0.01" value="1000" />
+              <form class="risk-form grid grid-cols-1 gap-4 md:grid-cols-2" id="risk-form">
+                <label class="form-field block space-y-2">
+                  <span class="block text-xs tracking-[0.18em] text-zinc-400">Saldo da conta</span>
+                  <div class="risk-control flex items-center rounded-xl border border-white/10 bg-white/5">
+                    <input class="h-12 w-full bg-transparent px-4 text-lg text-zinc-100 tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/60 [appearance:textfield]" id="risk-balance" type="number" min="1" step="0.01" value="1000" />
                     <span class="risk-steppers">
                       <button class="step-button" type="button" data-step-target="risk-balance" data-step-dir="up" aria-label="Aumentar saldo da conta"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 14 6-6 6 6" /></svg></button>
                       <button class="step-button" type="button" data-step-target="risk-balance" data-step-dir="down" aria-label="Diminuir saldo da conta"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 10 6 6 6-6" /></svg></button>
                     </span>
                   </div>
                 </label>
-                <label class="form-field">
-                  <span>Risco por operação (%)</span>
-                  <div class="risk-control">
-                    <input id="risk-percent" type="number" min="0.1" max="100" step="0.1" value="1" />
+                <label class="form-field block space-y-2">
+                  <span class="block text-xs tracking-[0.18em] text-zinc-400">Risco por operação (%)</span>
+                  <div class="risk-control flex items-center rounded-xl border border-white/10 bg-white/5">
+                    <input class="h-12 w-full bg-transparent px-4 text-lg text-zinc-100 tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/60 [appearance:textfield]" id="risk-percent" type="number" min="0.1" max="100" step="0.1" value="1" />
                     <span class="risk-steppers">
                       <button class="step-button" type="button" data-step-target="risk-percent" data-step-dir="up" aria-label="Aumentar risco por operação"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 14 6-6 6 6" /></svg></button>
                       <button class="step-button" type="button" data-step-target="risk-percent" data-step-dir="down" aria-label="Diminuir risco por operação"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 10 6 6 6-6" /></svg></button>
                     </span>
                   </div>
                 </label>
-                <label class="form-field">
-                  <span>Entrada</span>
-                  <div class="risk-control">
-                    <input id="risk-entry" type="number" step="0.000001" value="100" />
+                <label class="form-field block space-y-2">
+                  <span class="block text-xs tracking-[0.18em] text-zinc-400">Entrada</span>
+                  <div class="risk-control flex items-center rounded-xl border border-white/10 bg-white/5">
+                    <input class="h-12 w-full bg-transparent px-4 text-lg text-zinc-100 tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/60 [appearance:textfield]" id="risk-entry" type="number" step="0.000001" value="100" />
                     <span class="risk-steppers">
                       <button class="step-button" type="button" data-step-target="risk-entry" data-step-dir="up" aria-label="Aumentar entrada"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 14 6-6 6 6" /></svg></button>
                       <button class="step-button" type="button" data-step-target="risk-entry" data-step-dir="down" aria-label="Diminuir entrada"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 10 6 6 6-6" /></svg></button>
                     </span>
                   </div>
                 </label>
-                <label class="form-field">
-                  <span>Stop</span>
-                  <div class="risk-control">
-                    <input id="risk-stop" type="number" step="0.000001" value="98" />
+                <label class="form-field block space-y-2">
+                  <span class="block text-xs tracking-[0.18em] text-zinc-400">Stop</span>
+                  <div class="risk-control flex items-center rounded-xl border border-white/10 bg-white/5">
+                    <input class="h-12 w-full bg-transparent px-4 text-lg text-zinc-100 tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/60 [appearance:textfield]" id="risk-stop" type="number" step="0.000001" value="98" />
                     <span class="risk-steppers">
                       <button class="step-button" type="button" data-step-target="risk-stop" data-step-dir="up" aria-label="Aumentar stop"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 14 6-6 6 6" /></svg></button>
                       <button class="step-button" type="button" data-step-target="risk-stop" data-step-dir="down" aria-label="Diminuir stop"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 10 6 6 6-6" /></svg></button>
                     </span>
                   </div>
                 </label>
-                <label class="form-field">
-                  <span>Alvo (opcional)</span>
-                  <div class="risk-control">
-                    <input id="risk-target" type="number" step="0.000001" value="104" />
+                <label class="form-field block space-y-2">
+                  <span class="block text-xs tracking-[0.18em] text-zinc-400">Alvo (opcional)</span>
+                  <div class="risk-control flex items-center rounded-xl border border-white/10 bg-white/5">
+                    <input class="h-12 w-full bg-transparent px-4 text-lg text-zinc-100 tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/60 [appearance:textfield]" id="risk-target" type="number" step="0.000001" value="104" />
                     <span class="risk-steppers">
                       <button class="step-button" type="button" data-step-target="risk-target" data-step-dir="up" aria-label="Aumentar alvo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 14 6-6 6 6" /></svg></button>
                       <button class="step-button" type="button" data-step-target="risk-target" data-step-dir="down" aria-label="Diminuir alvo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 10 6 6 6-6" /></svg></button>
                     </span>
                   </div>
                 </label>
-                <button class="radar-action" type="submit">Calcular posição</button>
+                <button class="radar-action inline-flex !h-11 !w-fit !min-h-10 !justify-self-start items-center gap-2 !mt-0 !rounded-full !px-4 !py-0 !text-[11px] !tracking-[0.08em] !shadow-glow transition duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/50" type="submit">
+                  <svg class="h-4 w-4 opacity-80" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <rect x="4" y="3" width="16" height="18" rx="3" stroke="currentColor" stroke-width="1.7" />
+                    <path d="M8 7h8M8 12h2m4 0h2m-8 4h2m4 0h2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
+                  </svg>
+                  Calcular posição
+                </button>
               </form>
               <p class="radar-status" id="risk-status" role="status" aria-live="polite"></p>
               <div class="radar-result" id="risk-result" hidden></div>
+              <div class="radar-form">
+                <label class="form-field">
+                  <span>Ativo da amostra</span>
+                  <select id="risk-history-symbol"></select>
+                </label>
+                <button class="radar-action" id="risk-history-run" type="button">
+                  Analisar até 50 operações
+                </button>
+              </div>
+              <p class="radar-status" id="risk-history-status" role="status" aria-live="polite"></p>
+              <div class="radar-result" id="risk-history-result" hidden></div>
             </div>
           </section>
 
           <footer class="page-footer">
-            <strong class="page-footer-brand">Criado por Operadores para Operadores.</strong>
+            <strong class="page-footer-brand">SCALPING EDGE</strong>
            
-            <span class="page-footer-note">Conteúdo educativo com base em leitura visual — não constitui recomendação financeira nem garantia de resultado.</span>
+            <span class="page-footer-note">Ferramenta educativa. Não é recomendação financeira nem garantia de resultado.</span>
           </footer>
         </div>
       </main>
     </div>
+    <div id="react-toast-root"></div>
+    <script type="module" src="../assets/build/react-islands.js"></script>
   </body>
 </html>

@@ -7,7 +7,7 @@
   if (loader) {
     window.setTimeout(() => {
       loader.hidden = true;
-    }, 500);
+    }, 6500);
   }
 
   const apiStatus = document.getElementById("api-status");

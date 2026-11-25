@@ -1,6 +1,7 @@
 # Dependencias e artefatos
 node_modules/
 *.log
+/dist/
 
 # Segredos e configuracoes locais
 .env

@@ -4,6 +4,175 @@ Formato: cada versão lista o que mudou e por quê. O contrato (schema + validad
 e o prompt são versionados juntos; o nome do arquivo em `prompts/` acompanha
 `$script:ContractVersion`.
 
+## 9.6 — cadência segura e carregamento do varredor
+
+- Mercado e Varredor passam a usar intervalos mínimos de 2 s, sempre esperando a
+  resposta anterior terminar. Leituras lentas e falhas aumentam o intervalo
+  progressivamente; abas ocultas não iniciam novas leituras do mercado.
+- Um clique manual durante uma varredura automática fica enfileirado, em vez de
+  ser descartado. A primeira leitura mostra o esqueleto enquanto a requisição
+  real está em andamento; atualizações seguintes mantêm os resultados na tela.
+- Candles ainda não armazenados são obtidos em lotes de até quatro chamadas
+  concorrentes; o resultado do scanner exige cotação de TradingView com atraso
+  zero e nunca usa fechamento histórico como preço atual.
+- O botão de cálculo de risco ficou compacto, com ícone, foco visível e o mesmo
+  comportamento de cálculo.
+
+## 9.5 — amostra histórica no cálculo de risco
+
+- A aba Cálculo e Risco pode consultar até 50 operações mais recentes fechadas
+  em candles públicos de 5m dos últimos 60 dias, usando a estratégia EMA 9/21,
+  stop de 1,5 ATR e alvo ajustado ao risco/retorno informado.
+- Mostra frequências observadas de ganhos/perdas, resultado em R, recuo histórico
+  e a conversão aritmética para o risco fixo informado. Não chama isso de
+  probabilidade futura e não completa amostras menores.
+- Usa o fluxo assíncrono existente com contagem de candles, operações e
+  reamostragens; parâmetros de backtest são limitados e validados no servidor.
+
+## 9.4 — notícias públicas das últimas 24 horas
+
+- Amplia as buscas RSS para trading, Bitcoin/cripto, forex, bolsa americana,
+  Nasdaq, S&P 500 e demais temas de mercado.
+- Filtra por timestamp verificável no servidor; itens sem data, fora de 24 horas
+  ou com data futura não são exibidos. O cache também revalida a janela a cada
+  consulta.
+- Mantém atualização automática a cada minuto e não usa IA para buscar ou
+  resumir manchetes.
+
+## 9.3 — revisão do prompt visual (contrato 8.1)
+
+- Substitui a alegação de confidence determinístico por uma descrição explícita:
+  coverage e confidence são estimativas do modelo; o servidor aplica tetos, mas
+  não recalcula subescores internos nem comprova calibração estatística.
+- Define coverage pelo peso das categorias legíveis entre as aplicáveis e separa
+  legibilidade de força da evidência.
+- Permite `risk` vazio quando não houver limitação específica, remove a ressalva
+  genérica sobre o recorte visível e deixa de penalizar summaries curtos.
+- Mantém os seis títulos do summary e os campos do schema, sem exigir palavras,
+  preços, horários ou níveis que a imagem não permita verificar.
+- O servidor resolve o arquivo do prompt a partir da versão do contrato.
+
+## 9.2 — modelos de raciocínio (gpt-5.6-luna) com adaptação por família
+
+Mesmo contrato 8.0, mesmas rotas, mesmo schema e mesmo fluxo de validação. Mudou
+**como o corpo da requisição é montado**, porque trocar só a string do modelo
+quebraria a análise.
+
+- **`gpt-5.6-luna` é o modelo padrão**; `OPENAI_MODEL=gpt-4o-mini` volta ao
+  anterior sem tocar no código.
+- **Compatibilidade por família**: `gpt-5.6-luna` (e `gpt-5.x`, `gpt-6-*`,
+  `o-series`) é modelo de raciocínio — exige `max_completion_tokens` e recusa
+  `temperature`, `top_p` e penalidades. O request antigo mandava
+  `temperature: 0` + `max_tokens` e teria voltado HTTP 400. Agora o perfil é
+  derivado do id: modelos de raciocínio recebem `max_completion_tokens` e
+  `reasoning_effort`, sem `temperature`; `gpt-4o-mini` continua recebendo
+  `temperature: 0.0` + `max_tokens`, exatamente como antes. Structured Outputs
+  (`json_schema`, `strict: true`) e `store: false` valem nas duas famílias.
+- **Novo `OPENAI_REASONING_EFFORT`** (`none|low|medium|high|xhigh|max`, padrão
+  `low`). É escolha de custo/latência, não economia medida; valor inválido cai no
+  padrão com aviso visível.
+- **Bug corrigido — resposta vazia com `finish_reason=length`**: o teste de
+  conteúdo vazio vinha antes da repetição com mais tokens, então um modelo de
+  raciocínio que gastasse o orçamento pensando falhava sem nunca repetir. A
+  ordem foi invertida e a repetição grava no parâmetro de tokens da família.
+- **Fallback honesto**: em 404/`model_not_found` o servidor avisa e repete uma
+  única vez com `OPENAI_MODEL_FALLBACK` (padrão `gpt-4o-mini`), remontando o
+  corpo para a outra família; a resposta traz `X-ZNX-Model` e
+  `X-ZNX-Model-Fallback: 1`, e o JSONL grava `model` + `model_requested`. 400 de
+  imagem, 401 e 429 não trocam de modelo.
+- **`OPENAI_BASE_URL`** (padrão `https://api.openai.com/v1`) permite gateway
+  compatível; o endpoint continua `/chat/completions`, sem migração para
+  `/v1/responses`.
+- **Redação de chave centralizada** em `Hide-SensitiveDiagnostic`: chave literal,
+  cabeçalho `Bearer` e qualquer token `sk-…` somem do log, da resposta e da tela.
+- **Chamada HTTP extraída** para `Invoke-OpenAIChatCompletion` no módulo, com o
+  mesmo retry/backoff de antes e transporte injetável para teste.
+- **Bug corrigido — `HttpClient.Timeout` reatribuído a cada chamada**: o valor só
+  pode ser definido antes da primeira requisição, e o servidor reutiliza o
+  cliente. A segunda análise (e a releitura automática) falhava antes de sair
+  para a rede. O timeout agora só é aplicado ao cliente criado pela própria
+  função; o cliente injetado mantém o timeout com que foi criado. Regressão
+  coberta pelo teste 28.9.
+- **Verificação ponta a ponta sem créditos**: `tests/fixtures/mock-openai.ps1`
+  devolve o 404 real de `model_not_found` e registra o corpo recebido. Rodando o
+  servidor contra ele confirmou-se, na prática, `gpt-5.6-luna` com
+  `max_completion_tokens: 4000` + `reasoning_effort: low` e **sem** `temperature`,
+  seguido do fallback `gpt-4o-mini` com `max_tokens: 4000` + `temperature: 0`.
+  Nenhuma chamada real e nenhum crédito consumido.
+- **`GET /api/status`** passou a devolver `fallbackModel`, `family`,
+  `tokenParameter`, `temperature`, `reasoningEffort`, `maxOutputTokens`,
+  `supportsStructuredOutputs` e `apiBaseUrl` (nunca a chave).
+- **`tools/check-openai.ps1`**: confere modelo/conexão via `GET /v1/models`, sem
+  consumir créditos, e lista os modelos que a chave enxerga.
+- **Testes**: `tests/OpenAI.Tests.ps1` (27.1–27.11 unitários, 28.1–28.9 com
+  transporte simulado) entrou no `npm test`; `tests/Server.Tests.ps1` ganhou o
+  describe 29 (modelo, perfil e ausência da chave em `/api/status`) e o describe
+  30, que roda o servidor contra `tests/fixtures/mock-openai.ps1` e prova a
+  repetição de resposta cortada (4000 → 8000 tokens no parâmetro certo) sem
+  inventar análise válida. Nenhum teste chama a API real.
+
+## 9.1 — efeitos interativos só no Brave
+
+Mesmo contrato 8.0. Camada visual; nenhum dado muda.
+
+- **`assets/js/brave-fx.js`**: camada de canvas com partículas em vórtice no
+  cursor, malha de ligações que acende perto do ponteiro, rastro, ondas no
+  clique e pulso verde/vermelho a cada tique real de preço (evento
+  `znx:market-tick` disparado pelo radar). É pesada de propósito: 70–130
+  partículas e até ~8 mil ligações por quadro, com densidade proporcional à tela.
+- **Só no Brave**: o gate é `navigator.brave.isBrave()`; sem essa confirmação
+  o módulo não cria canvas nem classe no `body`. Nada de user-agent fingindo
+  ser Brave. `?fx=on` e `?fx=off` existem apenas para testar/desligar sem
+  editar código.
+- **Acessibilidade**: `prefers-reduced-motion` continua respeitado; `?fx=on`
+  sobrepõe a preferência do sistema porque é intenção explícita do usuário.
+- **Tilt 3D** nas linhas do mercado (`.fx-tilt`), aplicado só quando o módulo
+  está ativo; fora dele o layout e as transições seguem iguais.
+- **Servidor**: `assets/js/brave-fx.js` entrou na lista estática; o teste
+  10.17.1 garante o arquivo servido e a presença do gate.
+
+## 9.0 — radar em milissegundos, varredor ao vivo e comparativo multi-mercado
+
+Mesmo contrato 8.0. Nenhuma regra de dados mudou: tudo abaixo é leitura real,
+com cadência curta e sem inventar número.
+
+- **Radar em ms, sem derrubar a fonte**: o cache do snapshot caiu de 1 s para
+  250 ms e o do TradingView para 250 ms; o laço do painel passou a 250 ms depois
+  que a resposta anterior chega (nunca empilha). Quando a leitura passa de
+  400 ms o intervalo sobe para 750 ms; em falhas seguidas recua até 4 s. Uma
+  tentativa extra de 120 ms absorve blip de rede, e 429/5xx do TradingView
+  impõem pausa de 2 s em vez de insistir. A tela mostra `fonte em X ms` e
+  `painel em Y ms`, medidos de verdade.
+- **Investidor10**: referência em R$/24 h passou de 180 s para 60 s de cache.
+  É o ritmo da própria página; mais rápido só aumentaria risco de bloqueio.
+- **Varredor mais inteligente**: novo `Get-ZnxScanIndicators` calcula EMA 9/21/50,
+  RSI, ATR, ATR relativo (regime de volatilidade), momentum de 5 candles em ATR,
+  posição na faixa de 20 candles e frescor do rompimento. O score ganhou esses
+  fatores (todos opcionais; sem eles o resultado é idêntico ao anterior) e cada
+  ativo passou a trazer confiança de força, entrada, stop, alvo e R/R.
+- **Varredor ao vivo**: indicadores ficam 60 s em cache por ativo; preço e score
+  são refeitos a cada leitura com a cotação ao vivo do TradingView. O painel
+  atualiza sozinho a cada 5 s enquanto a aba Varredor está aberta, sem piscar a
+  lista (sem esqueleto e mantendo o filtro escolhido).
+- **Gráfico de 5 em 5 s**: cada período tem cache próprio (5 min → 5 s; 15 min →
+  15 s; 1 h → 30 s; 1 dia → 60 s) e a aba Gráfico recarrega sozinha a cada 5 s,
+  sem esqueleto quando já existe desenho na tela. O rodapé mostra a hora da
+  atualização.
+- **Máquina do tempo compara 8 mercados**: `GET /api/backtest/start?mode=sweep`
+  roda o mesmo histórico real de 60 dias em 8 mercados × 9 combinações de
+  stop/alvo (72 combinações, 8.640 reamostragens, ~5,7 milhões de cálculos numa
+  execução medida em 26 s), guarda cada entrada e saída e mostra o agregado:
+  entradas/saídas, acerto, média em R, fator de lucro, quantas combinações deram
+  certo e quantas não, além do melhor par stop/alvo por mercado com amostras de
+  operações. Nada é sorteado para "dar certo"; resultado negativo aparece como
+  negativo.
+- **Sinais reaproveitados**: `Get-ZnxBacktestSignals` calcula EMAs/ATR e os
+  cruzamentos uma vez por ativo; o comparativo reusa isso nas 9 combinações, e
+  um teste exige estatística idêntica à conta completa.
+- **Testes**: 7 novos casos no describe 26 do contrato de mercado (score antigo
+  preservado, fatores novos, confiança, frescor, detalhes de entrada/saída e
+  paridade dos sinais pré-calculados).
+
 ## 8.9 — faixas de confidence iguais em todo lado
 
 Mesmo contrato 8.0. Correção de classificação por faixa; inteiro preservado.

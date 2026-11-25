@@ -100,6 +100,36 @@ Describe "22. Varredor e plano" {
         $plan.riskReward | Should Be 2
         $plan.breakEvenWinRate | Should Be 33.3
     }
+
+    It "22.6 nao usa o fechamento historico como cotacao quando falta feed ao vivo" {
+        InModuleScope market {
+            $script:MarketCache.Remove("scanner")
+            Mock Get-ZnxTradingViewQuotes { return @{} }
+            Mock Get-ZnxScannerCandlePayloads { throw "Candles nao devem ser consultadas." }
+            Mock Get-ZnxMarketCandles { throw "Candles nao devem ser consultadas." }
+
+            { Get-ZnxScanner -CacheTtlSeconds 0 -CacheTtlMs 0 } | Should Throw
+            Assert-MockCalled Get-ZnxScannerCandlePayloads -Times 0 -Exactly
+            Assert-MockCalled Get-ZnxMarketCandles -Times 0 -Exactly
+        }
+    }
+
+    It "22.7 exclui cotacao atrasada sem recorrer ao fechamento historico" {
+        InModuleScope market {
+            $script:MarketCache.Remove("scanner")
+            Mock Get-ZnxTradingViewQuotes {
+                return @{
+                    "BTC-USD" = @{ price = 100; changePercent = 1; delaySeconds = 900 }
+                }
+            }
+            Mock Get-ZnxScannerCandlePayloads { throw "Candles nao devem ser consultadas." }
+            Mock Get-ZnxMarketCandles { throw "Candles nao devem ser consultadas." }
+
+            { Get-ZnxScanner -CacheTtlSeconds 0 -CacheTtlMs 0 } | Should Throw
+            Assert-MockCalled Get-ZnxScannerCandlePayloads -Times 0 -Exactly
+            Assert-MockCalled Get-ZnxMarketCandles -Times 0 -Exactly
+        }
+    }
 }
 
 Describe "23. Maquina do tempo" {
@@ -441,5 +471,118 @@ Describe "25. Avaliacao com desfechos de confidence invalido" {
         ($null -eq $empty.averageSquaredError) | Should Be $true
         $calibration = @($report.desfechos.calibracao)
         (@($calibration | Where-Object { $_.faixa -eq "55-69" })[0].amostras) | Should Be 0
+    }
+}
+
+Describe "26. Varredor inteligente e comparativo multi-mercado" {
+    It "26.1 sem os fatores novos o score e exatamente o antigo" {
+        $legacy = Get-ZnxSetupScore -TrendAtr 1.2 -Rsi 62 -BreakoutUp $true `
+            -BreakoutDown $false -VolumeRatio 1.8 -ExtensionAtr 1.1
+        $legacy | Should Be 56.4
+        ($legacy -ge 35) | Should Be $true
+    }
+
+    It "26.2 momentum e EMA 50 a favor reforcam o score; contra, reduzem" {
+        $base = @{
+            TrendAtr = 1.0; Rsi = 60; BreakoutUp = $true; BreakoutDown = $false
+            VolumeRatio = 1.5; ExtensionAtr = 1.0
+        }
+        $favor = Get-ZnxSetupScore @base -MomentumAtr 1.0 -HigherTrendAtr 0.8 -RangePosition 0.9
+        $against = Get-ZnxSetupScore @base -MomentumAtr -1.0 -HigherTrendAtr -0.8 -RangePosition 0.1
+        $neutral = Get-ZnxSetupScore @base
+        ($favor -gt $neutral) | Should Be $true
+        ($against -lt $neutral) | Should Be $true
+        ($favor -le 100) | Should Be $true
+        ($against -ge -100) | Should Be $true
+    }
+
+    It "26.3 rompimento recem-feito vale mais que rompimento de 5 candles atras" {
+        $params = @{
+            TrendAtr = 0.5; Rsi = 58; BreakoutUp = $true; BreakoutDown = $false
+            VolumeRatio = 1.2; ExtensionAtr = 0.8
+        }
+        $fresh = Get-ZnxSetupScore @params -Freshness 0
+        $old = Get-ZnxSetupScore @params -Freshness 5
+        ($fresh -gt $old) | Should Be $true
+    }
+
+    It "26.4 confianca fica em 5..95 e cai quando os fatores discordam" {
+        $aligned = Get-ZnxSetupConfidence -Score 60 -MomentumAtr 1.2 -HigherTrendAtr 0.9 `
+            -ExtensionAtr 1.0 -VolatilityRatio 1.1
+        $conflict = Get-ZnxSetupConfidence -Score 60 -MomentumAtr -1.2 -HigherTrendAtr -0.9 `
+            -ExtensionAtr 1.0 -VolatilityRatio 1.1
+        ($aligned -le 95 -and $aligned -ge 5) | Should Be $true
+        ($aligned -gt $conflict) | Should Be $true
+        (Get-ZnxSetupConfidence -Score 0) | Should Be 50
+    }
+
+    It "26.5 freshness conta quantos candles o preco esta fora do nivel" {
+        $close = [double[]]@(10, 10, 11, 12, 13)
+        (Get-ZnxBreakoutFreshness -Close $close -Level 10 -Up $true) | Should Be 2
+        (Get-ZnxBreakoutFreshness -Close $close -Level 20 -Up $true) | Should Be -1
+    }
+
+    It "26.6 backtest recolhe entrada e saida reais e conta os calculos" {
+        $series = New-OscillatingSeries -Count 400
+        $stats = Invoke-ZnxBacktestCore -OpenPrices $series.Open -High $series.High `
+            -Low $series.Low -Close $series.Close -Simulations 500 -Seed 7 -CollectTrades `
+            -MaxTradeDetails 500
+        ($stats.trades -gt 0) | Should Be $true
+        $details = @($stats.tradeDetails)
+        $details.Count | Should Be $stats.trades
+        ($stats.calculations -ge (500 * $stats.trades)) | Should Be $true
+        $first = $details[0]
+        ($first.direction -in @("LONG", "SHORT")) | Should Be $true
+        ($first.entry -gt 0) | Should Be $true
+        ($first.exit -gt 0) | Should Be $true
+        ($first.reason -in @("stop", "alvo")) | Should Be $true
+        (($first.resultR -eq 2) -or ($first.resultR -eq -1)) | Should Be $true
+    }
+
+    It "26.7 sinais pre-calculados dao o mesmo resultado da conta completa" {
+        $series = New-OscillatingSeries -Count 400
+        $signals = Get-ZnxBacktestSignals -High $series.High -Low $series.Low -Close $series.Close
+        ($signals.Items.Count -gt 0) | Should Be $true
+        $withSignals = Invoke-ZnxBacktestCore -OpenPrices $series.Open -High $series.High `
+            -Low $series.Low -Close $series.Close -Simulations 300 -Seed 3 -Signals $signals
+        $full = Invoke-ZnxBacktestCore -OpenPrices $series.Open -High $series.High `
+            -Low $series.Low -Close $series.Close -Simulations 300 -Seed 3
+        $withSignals.trades | Should Be $full.trades
+        $withSignals.avgR | Should Be $full.avgR
+        $withSignals.maxDrawdownR | Should Be $full.maxDrawdownR
+    }
+}
+
+Describe "27. Noticias nas ultimas 24 horas" {
+    It "27.1 mantem so itens com data verificavel dentro da janela e em ordem recente" {
+        $now = [datetime]::Parse("2026-11-24T18:00:00Z")
+        $items = @(
+            [pscustomobject]@{
+                title = "Na fronteira de 24 horas"
+                publishedAt = $now.AddHours(-24).ToString("o")
+            }
+            [pscustomobject]@{
+                title = "Mais recente"
+                publishedAt = $now.AddHours(-1).ToString("o")
+            }
+            [pscustomobject]@{
+                title = "Antiga"
+                publishedAt = $now.AddHours(-24).AddSeconds(-1).ToString("o")
+            }
+            [pscustomobject]@{
+                title = "Data futura"
+                publishedAt = $now.AddMinutes(1).ToString("o")
+            }
+            [pscustomobject]@{
+                title = "Sem data"
+                publishedAt = ""
+            }
+        )
+
+        $recent = @(Get-ZnxRecentNewsItems -Items $items -NowUtc $now)
+
+        $recent.Count | Should Be 2
+        $recent[0].title | Should Be "Mais recente"
+        $recent[1].title | Should Be "Na fronteira de 24 horas"
     }
 }

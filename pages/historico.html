@@ -8,12 +8,13 @@
     <meta name="theme-color" content="#080b0f" />
     <title>Scalping Edge — Histórico</title>
     <link rel="stylesheet" href="../assets/css/style.css" />
+    <link rel="stylesheet" href="../assets/build/react-islands.css" />
     <script src="../assets/js/pages.js" defer></script>
     <script src="../assets/js/history-page.js" defer></script>
   </head>
   <body>
     <div class="startup-loader" id="startup-loader" role="status" aria-live="polite">
-      <span class="startup-loader-ring" aria-hidden="true"></span>
+      <span id="splash-loader-root" aria-hidden="true"></span>
       <span class="startup-loader-brand">SCALPING <strong>EDGE</strong></span>
       <span class="startup-loader-caption">Preparando painel</span>
     </div>
@@ -54,6 +55,7 @@
 
       <main class="main-content" id="historico">
         <header class="topbar">
+          <div id="market-ticker-root" class="min-w-0 flex-1"></div>
           <button
             class="fullscreen-toggle"
             id="fullscreen-toggle"
@@ -103,12 +105,14 @@
 
 
           <footer class="page-footer">
-            <strong class="page-footer-brand">Criado por Operadores para Operadores.</strong>
+            <strong class="page-footer-brand">SCALPING EDGE</strong>
            
-            <span class="page-footer-note">Conteúdo educativo com base em leitura visual — não constitui recomendação financeira nem garantia de resultado.</span>
+            <span class="page-footer-note">Ferramenta educativa. Não é recomendação financeira nem garantia de resultado.</span>
           </footer>
         </div>
       </main>
     </div>
+    <div id="react-toast-root"></div>
+    <script type="module" src="../assets/build/react-islands.js"></script>
   </body>
 </html>

@@ -5,7 +5,7 @@
     "lib": ["ES2021", "DOM"],
     "rootDir": "assets/ts",
     "outDir": "assets/js",
-    "strict": false,
+    "strict": true,
     "noEmitOnError": true,
     "removeComments": false,
     "skipLibCheck": true,

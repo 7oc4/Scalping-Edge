@@ -53,9 +53,11 @@
   const scannerRun = document.getElementById("scanner-run");
   const scannerStatus = document.getElementById("scanner-status");
   const scannerList = document.getElementById("scanner-list");
+  let scannerTimer = null;
 
   const backtestSymbol = document.getElementById("backtest-symbol");
   const backtestRun = document.getElementById("backtest-run");
+  const backtestSweep = document.getElementById("backtest-sweep");
   const backtestStatus = document.getElementById("backtest-status");
   const backtestResult = document.getElementById("backtest-result");
 
@@ -67,6 +69,10 @@
   const riskForm = document.getElementById("risk-form");
   const riskStatus = document.getElementById("risk-status");
   const riskResult = document.getElementById("risk-result");
+  const riskHistorySymbol = document.getElementById("risk-history-symbol");
+  const riskHistoryRun = document.getElementById("risk-history-run");
+  const riskHistoryStatus = document.getElementById("risk-history-status");
+  const riskHistoryResult = document.getElementById("risk-history-result");
 
   let marketLoaded = false;
   let marketLoading = false;
@@ -81,8 +87,18 @@
   let marketFailures = 0;
   let marketReceivedAt = 0;
   let marketPollTimer = null;
+  let marketLastLatency = 0;
   let backtestToken = 0;
   let backtestLastProgress = null;
+  let currentTab = "mercado";
+
+  // Cadencia do radar em milissegundos. O proximo ciclo so comeca depois que
+  // o anterior termina; se a fonte demora ou falha, o intervalo sobe sozinho
+  // para nao empilhar requisicoes e derrubar o servidor publico.
+  const MARKET_POLL_MS = 2000;
+  const MARKET_POLL_MAX_MS = 16000;
+  const SCANNER_POLL_MS = 2000;
+  const CHART_POLL_MS = 5000;
 
   // Estado visual da varredura: so gira enquanto existe requisicao real
   // em andamento. Terminada a busca, fica "live" (tempo real) ou "error".
@@ -211,11 +227,11 @@
     return "";
   }
 
-  async function fetchJson(url) {
-    // Teto de espera: com o servidor local preso, o ciclo de 1 s nao pode
+  async function fetchJson(url, timeoutMs = 12000) {
+    // Teto de espera: com o servidor local preso, o ciclo curto nao pode
     // ficar pendurado para sempre e parecer que esta atualizando.
     const controller = new AbortController();
-    const timer = window.setTimeout(() => controller.abort(), 12000);
+    const timer = window.setTimeout(() => controller.abort(), timeoutMs);
     let response;
     try {
       response = await fetch(url, {
@@ -224,7 +240,7 @@
       });
     } catch (error) {
       if (error && error.name === "AbortError") {
-        throw new Error("O servidor local não respondeu em 12 s.");
+        throw new Error(`O servidor local não respondeu em ${Math.round(timeoutMs / 1000)} s.`);
       }
       throw error;
     } finally {
@@ -293,7 +309,9 @@
   }
 
   function buildMarket(groups, data) {
+    window.ScalpingReact?.unmountPriceSparkCharts(marketGroups);
     marketGroups.replaceChildren();
+    const pendingSparkCharts = [];
     const cryptoSource =
       data.cryptoSource && data.cryptoSource.name ? data.cryptoSource : null;
     let rowIndex = 0;
@@ -355,7 +373,8 @@
         }
         name.append(nameLabel, el("span", null, quote.symbol));
 
-        const chart = sparkline(quote.spark, positive);
+        const chart = el("div", "market-spark-root");
+        pendingSparkCharts.push({ chart, series: quote.spark, positive });
         const price = el("div", "market-price");
         price.append(el("strong", null, formatPrice(quote.price)));
         const change = el(
@@ -380,6 +399,27 @@
       }
       card.append(rows);
       marketGroups.append(card);
+    }
+
+    for (const entry of pendingSparkCharts) {
+      if (window.ScalpingReact) {
+        window.ScalpingReact.mountPriceSparkChart(entry.chart, entry.series, entry.positive);
+      } else {
+        entry.chart.append(sparkline(entry.series, entry.positive));
+        window.addEventListener(
+          "scalping:react-ready",
+          () => {
+            if (entry.chart.isConnected) {
+              window.ScalpingReact.mountPriceSparkChart(
+                entry.chart,
+                entry.series,
+                entry.positive,
+              );
+            }
+          },
+          { once: true },
+        );
+      }
     }
 
     if (marketGroups.childElementCount === 0) {
@@ -447,6 +487,11 @@
             nodes.row.classList.remove("is-tick-up", "is-tick-down");
             void nodes.row.offsetWidth;
             nodes.row.classList.add(up ? "is-tick-up" : "is-tick-down");
+            // Avisa a camada de efeitos (so ativa no Brave) para desenhar um
+            // pulso na cor da direcao. E o tique real, nao um enfeite aleatorio.
+            window.dispatchEvent(
+              new CustomEvent("znx:market-tick", { detail: { symbol: quote.symbol, up } }),
+            );
           }
           nodes.prevPrice = nextPrice;
         }
@@ -515,7 +560,15 @@
       // ja pintou o estado e o texto.
       return;
     }
-    const base = `TradingView: ${live} ativo(s) em tempo real · lido ${stamp}.`;
+    const readMs = feed && Number.isFinite(Number(feed.readMs)) ? Number(feed.readMs) : 0;
+    const parts = [`TradingView: ${live} ativo(s) em tempo real`, `lido ${stamp}`];
+    if (readMs > 0) {
+      parts.push(`fonte em ${readMs} ms`);
+    }
+    if (marketLastLatency > 0) {
+      parts.push(`painel em ${marketLastLatency} ms`);
+    }
+    const base = `${parts.join(" · ")}.`;
     if (failed.length === 0) {
       setStatus(radarStatus, base, "ok");
       return;
@@ -572,7 +625,15 @@
     };
 
     tapeTrack.append(buildItems(false), buildItems(true));
-    tapeTrack.style.setProperty("--tape-duration", `${Math.max(30, quotes.length * 4)}s`);
+    tapeTrack.style.setProperty("--tape-duration", `${Math.max(40, quotes.length * 5)}s`);
+  }
+
+  function clearTape() {
+    if (!tapeTrack) {
+      return;
+    }
+    tapeTrack.replaceChildren(el("p", "live-tape-empty", "Sem cotações agora."));
+    marketTapeSignature = "";
   }
 
   // Atualiza a faixa sem reiniciar a animacao do letreiro.
@@ -630,15 +691,14 @@
       return;
     }
     marketLoading = true;
-    // O ciclo automatico NAO desabilita o botao: alternar `disabled` a cada
-    // ~500 ms fazia o botao piscar e perder cliques (o "toque fantasma").
+    // O ciclo automatico nao desabilita "Atualizar"; novas leituras duplicadas
+    // ficam protegidas pelo guarda marketLoading.
     // Requisicao empilhada continua barrada pelo guarda marketLoading.
     if (!silent) {
       refreshButton.disabled = true;
     }
     // A varredura so aparece em busca de verdade: primeira carga ou clique em
-    // "Atualizar". O ciclo automatico de 1 s nao pode piscar o texto a cada
-    // segundo (era o que fazia o rotulo alternar sozinho).
+    // "Atualizar". O ciclo automatico nao altera o rotulo a cada leitura.
     const scanning = !silent || !marketReceivedAt;
     if (!silent) {
       setStatus(radarStatus, "Buscando cotações no TradingView…");
@@ -660,10 +720,15 @@
       radarLive.classList.add("is-refreshing");
     }
     try {
-      const data = await fetchJson("/api/market");
+      const startedAt = window.performance?.now ? window.performance.now() : Date.now();
+      const data = await fetchJson("/api/market", 6000);
+      marketLastLatency = Math.round(
+        (window.performance?.now ? window.performance.now() : Date.now()) - startedAt,
+      );
       const live = data.quotes ? Number(data.quotes.live) || 0 : 0;
       marketFailures = 0;
       if (live > 0) {
+        updateChartLiveQuote(data);
         renderMarket(data);
         marketLoaded = true;
         marketReceivedAt = Date.now();
@@ -681,7 +746,7 @@
         // reaproveitar preco antigo como se fosse cotacao de agora.
         marketNodeMap = new Map();
         marketSignature = "";
-        marketTapeSignature = "";
+        clearTape();
         marketGroups.replaceChildren(
           el(
             "p",
@@ -705,6 +770,7 @@
       }
     } catch (error) {
       marketFailures += 1;
+      clearTape();
       // Uma falha isolada nao derruba o painel: o ciclo seguinte tenta de
       // novo. Depois de tres seguidas a fonte e declarada fora do ar.
       if (marketFailures >= 3 || !marketReceivedAt) {
@@ -755,6 +821,7 @@
   }
 
   function selectTab(key) {
+    currentTab = key;
     tabs.forEach((tab) => {
       const active = tab.dataset.radarTab === key;
       tab.setAttribute("aria-selected", String(active));
@@ -768,6 +835,11 @@
     }
     if (key === "grafico") {
       loadChart(false);
+      scheduleChartPoll(CHART_POLL_MS);
+    }
+    if (key === "varredor") {
+      // O varredor passa a acompanhar o mercado sozinho a cada 2 s.
+      scheduleScannerAuto(0);
     }
   }
 
@@ -783,14 +855,25 @@
     window.clearTimeout(marketPollTimer);
     marketPollTimer = window.setTimeout(async () => {
       if (document.hidden) {
-        scheduleMarketPoll(1500);
+        scheduleMarketPoll(MARKET_POLL_MS);
         return;
       }
       await loadMarket(true, true);
-      scheduleMarketPoll(500);
+      // Cadencia de 2 s sem sobrepor requisicoes; latencia alta ou falhas
+      // aumentam o intervalo para reduzir a pressao sobre a fonte publica.
+      let next = MARKET_POLL_MS;
+      if (marketFailures > 0) {
+        next = Math.min(
+          MARKET_POLL_MAX_MS,
+          MARKET_POLL_MS * 2 ** (marketFailures - 1),
+        );
+      } else if (marketLastLatency > MARKET_POLL_MS) {
+        next = Math.min(MARKET_POLL_MAX_MS, marketLastLatency);
+      }
+      scheduleMarketPoll(next);
     }, delay);
   }
-  scheduleMarketPoll(800);
+  scheduleMarketPoll(600);
 
   // Contador honesto: mostra ha quanto tempo veio a ultima leitura real.
   window.setInterval(() => {
@@ -839,11 +922,15 @@
   }
   populateSymbols(backtestSymbol);
   populateSymbols(planSymbol);
+  populateSymbols(riskHistorySymbol);
   if (backtestSymbol) {
     backtestSymbol.value = "BTC-USD";
   }
   if (planSymbol) {
     planSymbol.value = "BTC-USD";
+  }
+  if (riskHistorySymbol) {
+    riskHistorySymbol.value = "BTC-USD";
   }
 
   function signalBadge(signal) {
@@ -856,11 +943,20 @@
   let scannerItems = [];
   let scannerFilter = "all";
   let scannerMeta = { scanned: 0 };
+  let scannerLoadingManual = false;
+  let scannerManualQueued = false;
 
-  function renderScanner(data) {
+  function renderScanner(data, resetFilter = true) {
     scannerItems = Array.isArray(data.items) ? data.items : [];
     scannerMeta = { scanned: Number(data.scanned) || scannerItems.length };
-    scannerFilter = "all";
+    if (resetFilter) {
+      scannerFilter = "all";
+    } else if (
+      scannerFilter !== "all" &&
+      !scannerItems.some((item) => item.signal === scannerFilter)
+    ) {
+      scannerFilter = "all";
+    }
     renderScannerSummary();
     renderScannerRows();
   }
@@ -967,6 +1063,15 @@
       row.append(el("span", "scanner-number", `${Number(item.atrPercent).toFixed(2)}%`));
 
       const reasons = el("span", "scanner-reasons", (item.reasons || []).join(" · "));
+      if (item.entry) {
+        reasons.append(
+          el(
+            "span",
+            "scanner-levels",
+            `entrada ${formatPrice(item.entry)} · stop ${formatPrice(item.stop)} · alvo ${formatPrice(item.target)} (${Number(item.riskReward).toFixed(2)}R)`,
+          ),
+        );
+      }
       const scoreWrap = el("span", "scanner-score-wrap");
       scoreWrap.append(
         el(
@@ -975,6 +1080,9 @@
           `score ${Number(item.score) > 0 ? "+" : ""}${Number(item.score).toFixed(1)}`,
         ),
       );
+      if (Number.isFinite(Number(item.confidence))) {
+        scoreWrap.append(el("span", "scanner-confidence", `força ${Number(item.confidence)}`));
+      }
       const bar = el("span", "scanner-bar");
       const fill = el("i");
       fill.style.width = `${Math.min(100, (Math.abs(Number(item.score)) / 60) * 100)}%`;
@@ -998,32 +1106,74 @@
     }
   }
 
-  scannerRun.addEventListener("click", async () => {
+  function setScannerButtonBusy(busy) {
+    scannerRun.disabled = busy;
+    if (busy) {
+      scannerRun.setAttribute("aria-busy", "true");
+      scannerRun.replaceChildren(
+        el(
+          "span",
+          "inline-block h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-current border-r-transparent motion-reduce:animate-none",
+        ),
+        document.createTextNode("Varrendo…"),
+      );
+    } else {
+      scannerRun.removeAttribute("aria-busy");
+      scannerRun.textContent = "Varrer agora";
+    }
+  }
+
+  async function runScanner(manual) {
     if (scannerLoading) {
+      if (manual && !scannerLoadingManual && !scannerManualQueued) {
+        scannerManualQueued = true;
+        setScannerButtonBusy(true);
+        setStatus(
+          scannerStatus,
+          "Solicitação recebida; a leitura atual termina antes da próxima varredura.",
+        );
+      }
       return;
     }
     scannerLoading = true;
-    scannerRun.disabled = true;
-    scannerRun.textContent = "Varrendo…";
-    setStatus(scannerStatus, "Varrendo a watchlist em tempo real, candles de 5 minutos…");
-    setLiveState(
-      scannerLive,
-      scannerLiveLabel,
-      scannerLiveMeta,
-      "scanning",
-      "Varrendo cotações e setups",
-      "lendo candles de 5 minutos",
-    );
-    if (scannerSummary) {
-      scannerSummary.replaceChildren();
+    scannerLoadingManual = manual;
+    const firstLoad = scannerItems.length === 0;
+    if (firstLoad) {
+      if (scannerSummary) {
+        scannerSummary.replaceChildren();
+      }
+      if (scannerFilters) {
+        scannerFilters.replaceChildren();
+      }
+      showScannerSkeleton();
     }
-    if (scannerFilters) {
-      scannerFilters.replaceChildren();
+    scannerList.setAttribute("aria-busy", "true");
+    if (manual) {
+      setScannerButtonBusy(true);
+      setStatus(scannerStatus, "Varrendo ativos disponíveis · candles de 5 min…");
+      setLiveState(
+        scannerLive,
+        scannerLiveLabel,
+        scannerLiveMeta,
+        "scanning",
+        "Varrendo cotações e setups",
+        "lendo candles de 5 minutos",
+      );
+    } else {
+      // Atualizacoes automaticas preservam resultados existentes; no primeiro
+      // ciclo, o esqueleto so aparece enquanto a requisicao real esta pendente.
+      setLiveState(
+        scannerLive,
+        scannerLiveLabel,
+        scannerLiveMeta,
+        firstLoad ? "scanning" : "live",
+        firstLoad ? "Primeira varredura" : "Ao vivo",
+        "atualizando preço e setup",
+      );
     }
-    showScannerSkeleton();
     try {
-      const data = await fetchJson("/api/scanner");
-      renderScanner(data);
+      const data = await fetchJson("/api/scanner", 65000);
+      renderScanner(data, manual || firstLoad);
       const failed = Array.isArray(data.failed) ? data.failed.length : 0;
       const longCount = scannerItems.filter((item) => item.signal === "LONG").length;
       const shortCount = scannerItems.filter((item) => item.signal === "SHORT").length;
@@ -1039,42 +1189,85 @@
           `lido ${formatClock(data.at) || "agora"}`,
         );
       } else {
-        // Ativo sem resposta fica fora da lista, mas nao e falha da varredura.
+        // Mostra quantas leituras ficaram incompletas sem atribuir a falha a
+        // uma fonte especifica quando pode ter faltado candle ou cotacao.
         const outside = failed
           ? failed === 1
-            ? " · 1 sem preço ao vivo ficou fora"
-            : ` · ${failed} sem preço ao vivo ficaram fora`
+            ? " · 1 ativo sem leitura completa ficou fora"
+            : ` · ${failed} ativos sem leitura completa ficaram fora`
           : "";
-        setStatus(
-          scannerStatus,
-          `Varredura concluída em ${scanned} ativos · ${longCount} compra(s), ${shortCount} venda(s)${outside}.`,
-          "ok",
-        );
+        const latency = Number(data.latencyMs) > 0 ? ` · ${Number(data.latencyMs)} ms` : "";
+        if (manual) {
+          setStatus(
+            scannerStatus,
+            `Varredura concluída em ${scanned} ativos · ${longCount} compra(s), ${shortCount} venda(s)${outside}${latency}.`,
+            "ok",
+          );
+        } else {
+          setStatus(
+            scannerStatus,
+            `Ao vivo · ${scanned} ativos · ${longCount} compra(s), ${shortCount} venda(s)${outside}${latency}.`,
+            "ok",
+          );
+        }
         setLiveState(
           scannerLive,
           scannerLiveLabel,
           scannerLiveMeta,
-          "ok",
-          "Varredura concluída",
-          `${scanned} ativos lidos às ${formatClock(data.at)}${failed ? ` · ${failed} fora` : ""}`,
+          manual ? "ok" : "live",
+          manual ? "Varredura concluída" : "Ao vivo",
+          `${scanned} ativos lidos às ${formatClock(data.at)}${failed ? ` · ${failed} sem leitura completa` : ""}${latency}`,
         );
       }
     } catch (error) {
-      setStatus(scannerStatus, error.message, "error");
+      scannerItems = [];
+      scannerMeta = { scanned: 0 };
+      scannerSummary?.replaceChildren();
+      scannerFilters?.replaceChildren();
+      scannerList.replaceChildren();
+      setStatus(
+        scannerStatus,
+        manual ? error.message : `${error.message} Nova tentativa em 2 s.`,
+        "error",
+      );
       setLiveState(
         scannerLive,
         scannerLiveLabel,
         scannerLiveMeta,
         "error",
-        "Varredura falhou",
+        manual ? "Varredura falhou" : "Leitura falhou",
         error.message,
       );
     } finally {
       scannerLoading = false;
-      scannerRun.disabled = false;
-      scannerRun.textContent = "Varrer agora";
+      scannerLoadingManual = false;
+      scannerList.removeAttribute("aria-busy");
+      if (manual) {
+        setScannerButtonBusy(false);
+      }
+      if (scannerManualQueued) {
+        scannerManualQueued = false;
+        window.clearTimeout(scannerTimer);
+        scannerTimer = null;
+        window.setTimeout(() => runScanner(true), 0);
+      } else {
+        scheduleScannerAuto();
+      }
     }
-  });
+  }
+
+  function scheduleScannerAuto(delay = SCANNER_POLL_MS) {
+    window.clearTimeout(scannerTimer);
+    scannerTimer = window.setTimeout(async () => {
+      if (currentTab !== "varredor" || document.hidden) {
+        scheduleScannerAuto(SCANNER_POLL_MS);
+        return;
+      }
+      await runScanner(false);
+    }, delay);
+  }
+
+  scannerRun.addEventListener("click", () => runScanner(true));
 
   function statCard(label, value, hint) {
     const card = el("div", "stat-card");
@@ -1100,16 +1293,21 @@
     );
     backtestResult.append(summary);
 
-    const grid = el("div", "stats-grid");
-    grid.append(statCard("Acerto", `${stats.winRate}%`, `${stats.wins}W / ${stats.losses}L`));
+    const grid = el(
+      "div",
+      "stats-grid grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3",
+    );
+    grid.append(statCard("Acerto", `${stats.winRate}%`, `${stats.wins} vitórias · ${stats.losses} perdas`));
     grid.append(statCard("Resultado médio", `${stats.avgR}R`, "por operação"));
     grid.append(statCard("Fator de lucro", String(stats.profitFactor), "ganhos ÷ perdas"));
     grid.append(
-      statCard("Simulações", String(stats.simulations), `${stats.probProfit}% terminaram positivas`),
+      statCard("Trajetórias positivas", `${stats.probProfit}%`, "na reamostragem histórica"),
     );
-    grid.append(statCard("Resultado mediano", `${stats.medianR}R`, "10 mil reamostragens"));
-    grid.append(statCard("Faixa provável", `${stats.p5R}R a ${stats.p95R}R`, "5% a 95%"));
-    grid.append(statCard("Pior drawdown", `${stats.maxDrawdownR}R`, "no cenário simulado"));
+    grid.append(
+      statCard("Mediana reamostrada", `${stats.medianR}R`, `${formatCount(stats.simulations)} trajetórias`),
+    );
+    grid.append(statCard("Faixa reamostrada", `${stats.p5R}R a ${stats.p95R}R`, "percentis 5–95"));
+    grid.append(statCard("Maior recuo simulado", `${stats.maxDrawdownR}R`, "na reamostragem"));
     grid.append(
       statCard("Stop / alvo", `${stats.stopAtr} / ${stats.targetAtr} ATR`, "regra executada"),
     );
@@ -1118,18 +1316,130 @@
       el(
         "p",
         "radar-disclaimer",
-        "Backtest não garante resultado futuro. Custos, spread e slippage não estão incluídos; a simulação usa apenas o histórico público disponível.",
+        "Resultados históricos não projetam retornos futuros. Custos, spread e slippage não estão modelados.",
+      ),
+    );
+    backtestResult.hidden = false;
+  }
+
+  // Comparativo multi-mercado: agregado real + uma linha por mercado com o
+  // melhor par stop/alvo e amostras de entrada e saida.
+  function renderSweep(data) {
+    const agg = data.aggregate || {};
+    backtestResult.replaceChildren();
+    const summary = el("div", "radar-result-head");
+    summary.append(
+      el("h3", null, `Comparativo: ${formatCount(agg.markets)} mercados · ${data.timeframe} · 60 dias`),
+    );
+    summary.append(
+      el(
+        "p",
+        null,
+        `${formatCount(agg.combos)} combinações de stop/alvo · ${formatCount(agg.simulations)} reamostragens · ${formatCount(agg.calculations)} cálculos · ${data.strategy}.`,
+      ),
+    );
+    backtestResult.append(summary);
+
+    const elapsed = (Number(agg.elapsedMs) || 0) / 1000;
+    const grid = el("div", "stats-grid");
+    grid.append(
+      statCard(
+        "Entradas / saídas",
+        `${formatCount(agg.entries)} / ${formatCount(agg.exits)}`,
+        "operações calculadas no histórico",
+      ),
+    );
+    grid.append(
+      statCard(
+        "Acerto médio",
+        `${agg.winRate}%`,
+        `${formatCount(agg.wins)} vitórias · ${formatCount(agg.losses)} perdas`,
+      ),
+    );
+    grid.append(statCard("Resultado médio", `${agg.avgR}R`, "por operação"));
+    grid.append(statCard("Fator de lucro", String(agg.profitFactor), "ganhos ÷ perdas"));
+    grid.append(
+      statCard("Média histórica positiva", formatCount(agg.successfulCombos), "configurações"),
+    );
+    grid.append(
+      statCard("Média não positiva", formatCount(agg.failedCombos), "configurações"),
+    );
+    grid.append(
+      statCard("Cálculos", formatCount(agg.calculations), `${elapsed.toFixed(1).replace(".", ",")} s`),
+    );
+    backtestResult.append(grid);
+
+    const table = el("div", "sweep-table");
+    const header = el("div", "sweep-row sweep-header");
+    for (const title of ["ATIVO", "OPERAÇÕES", "ACERTO", "MÉDIA", "STOP / ALVO", "V / P"]) {
+      header.append(el("span", null, title));
+    }
+    table.append(header);
+
+    const markets = Array.isArray(data.markets) ? data.markets : [];
+    markets.forEach((market, index) => {
+      const row = el("div", "sweep-row");
+      row.style.setProperty("--i", String(index));
+      const asset = el("div", "scanner-asset");
+      asset.append(
+        el("strong", null, market.label || market.symbol),
+        el("span", null, market.symbol),
+      );
+      const avg = Number(market.avgR) || 0;
+      row.append(
+        asset,
+        el("span", "scanner-number", formatCount(market.trades)),
+        el("span", "scanner-number", `${market.winRate}%`),
+        el("span", `scanner-number ${avg >= 0 ? "is-up" : "is-down"}`, `${avg > 0 ? "+" : ""}${avg}R`),
+        el("span", "scanner-number", `${market.bestStopAtr} / ${market.bestTargetAtr} ATR`),
+        el("span", "scanner-number", `${formatCount(market.wins)} / ${formatCount(market.losses)}`),
+      );
+      table.append(row);
+
+      const samples = Array.isArray(market.samples) ? market.samples : [];
+      if (samples.length > 0) {
+        const details = el("details", "sweep-samples");
+        details.append(
+          el("summary", null, `ver ${samples.length} entrada(s) e saída(s) de ${market.label}`),
+        );
+        for (const sample of samples) {
+          const result = Number(sample.resultR) || 0;
+          const line = el("div", "sweep-sample");
+          line.append(
+            el(
+              "span",
+              null,
+              `${sample.direction} · entrada ${formatPrice(sample.entry)} → saída ${formatPrice(sample.exit)}`,
+            ),
+            el(
+              "span",
+              `sweep-sample-r ${result >= 0 ? "is-up" : "is-down"}`,
+              `${result > 0 ? "+" : ""}${result.toFixed(2)}R · ${sample.reason}`,
+            ),
+          );
+          details.append(line);
+        }
+        table.append(details);
+      }
+    });
+    backtestResult.append(table);
+    backtestResult.append(
+      el(
+        "p",
+        "radar-disclaimer",
+        "Comparativo histórico, não previsão. Custos, spread e slippage não estão modelados.",
       ),
     );
     backtestResult.hidden = false;
   }
 
   const BACKTEST_PHASES = {
-    candles: { label: "Baixando 60 dias de candles reais…", tag: "histórico" },
-    trades: { label: "Lendo o histórico candle a candle…", tag: "trades" },
-    simulations: { label: "Reamostrando os trades encontrados…", tag: "simulações" },
-    done: { label: "Simulação concluída", tag: "concluído" },
-    failed: { label: "Simulação interrompida", tag: "falhou" },
+    markets: { label: "Comparando ativos e configurações…", tag: "comparativo" },
+    candles: { label: "Carregando candles históricos…", tag: "histórico" },
+    trades: { label: "Processando operações encerradas…", tag: "operações" },
+    simulations: { label: "Reamostrando resultados históricos…", tag: "reamostragem" },
+    done: { label: "Backtest concluído", tag: "concluído" },
+    failed: { label: "Backtest interrompido", tag: "falhou" },
   };
 
   function formatCount(value) {
@@ -1172,7 +1482,13 @@
       backtestCounter.textContent = formatCount(done);
     }
     if (backtestCounterLabel) {
-      const unit = phaseKey === "simulations" || phaseKey === "done" ? "reamostragens" : "candles";
+      const isSweep =
+        phaseKey === "markets" || Boolean(progress.result && progress.result.mode === "sweep");
+      const unit = isSweep
+        ? "combinações"
+        : phaseKey === "simulations" || phaseKey === "done"
+          ? "reamostragens"
+          : "candles";
       backtestCounterLabel.textContent =
         total > 0
           ? `de ${formatCount(total)} ${unit}`
@@ -1205,59 +1521,76 @@
     return new Promise((resolve) => window.setTimeout(resolve, ms));
   }
 
-  async function pollBacktest(token) {
+  async function pollBacktest(token, onProgress) {
     while (token === backtestToken) {
       const progress = await fetchJson("/api/backtest/progress");
       if (token !== backtestToken) {
         return null;
       }
       if (progress.state === "idle") {
-        throw new Error("A simulação não está mais rodando. Inicie de novo.");
+        throw new Error("O backtest não está mais ativo. Inicie novamente.");
       }
       setBacktestProgress(progress);
+      if (onProgress) {
+        onProgress(progress);
+      }
       if (progress.state === "done") {
         return progress;
       }
       if (progress.state === "failed") {
-        throw new Error(progress.error || "A simulação falhou no servidor.");
+        throw new Error(progress.error || "O backtest falhou no servidor.");
       }
       await sleep(400);
     }
     return null;
   }
 
-  backtestRun.addEventListener("click", async () => {
+  async function startBacktest(sweep) {
     if (backtestLoading) {
       return;
     }
     backtestLoading = true;
     backtestRun.disabled = true;
+    if (backtestSweep) {
+      backtestSweep.disabled = true;
+    }
+    if (riskHistoryRun) {
+      riskHistoryRun.disabled = true;
+    }
     backtestResult.hidden = true;
     backtestToken += 1;
     const token = backtestToken;
-    setStatus(backtestStatus, "Preparando a Máquina do tempo…");
+    setStatus(
+      backtestStatus,
+      sweep
+        ? "Comparando ativos e configurações com candles históricos…"
+        : "Iniciando backtest com candles históricos…",
+    );
     setBacktestProgress({
       state: "running",
-      phase: "candles",
+      phase: sweep ? "markets" : "candles",
       done: 0,
       total: 0,
       trades: 0,
       elapsedMs: 0,
     });
     try {
-      const start = await fetchJson(
-        `/api/backtest/start?symbol=${encodeURIComponent(backtestSymbol.value)}`,
-      );
+      const url = sweep
+        ? "/api/backtest/start?mode=sweep"
+        : `/api/backtest/start?symbol=${encodeURIComponent(backtestSymbol.value)}`;
+      const start = await fetchJson(url);
       setBacktestProgress(start);
-      if (start.state === "done" && start.result) {
-        renderBacktest(start.result);
-        setStatus(backtestStatus, "Simulação concluída.", "ok");
-      } else {
-        const final = await pollBacktest(token);
-        if (final && final.result) {
+      let final = start;
+      if (start.state !== "done" || !start.result) {
+        final = await pollBacktest(token);
+      }
+      if (final && final.result) {
+        if (final.result.mode === "sweep") {
+          renderSweep(final.result);
+        } else {
           renderBacktest(final.result);
-          setStatus(backtestStatus, "Simulação concluída.", "ok");
         }
+        setStatus(backtestStatus, "Backtest concluído.", "ok");
       }
     } catch (error) {
       setStatus(backtestStatus, error.message, "error");
@@ -1269,30 +1602,302 @@
     } finally {
       backtestLoading = false;
       backtestRun.disabled = false;
+      if (backtestSweep) {
+        backtestSweep.disabled = false;
+      }
+      if (riskHistoryRun) {
+        riskHistoryRun.disabled = false;
+      }
     }
-  });
+  }
+
+  backtestRun.addEventListener("click", () => startBacktest(false));
+  if (backtestSweep) {
+    backtestSweep.addEventListener("click", () => startBacktest(true));
+  }
+
+  function renderRiskHistory(data, riskAmount, targetRiskReward) {
+    const stats = data.stats || {};
+    const trades = (Array.isArray(stats.tradeDetails) ? stats.tradeDetails : [])
+      .slice(-50)
+      .filter((trade) => Number.isFinite(Number(trade.resultR)));
+    if (trades.length === 0) {
+      throw new Error("Não houve operação fechada suficiente no histórico disponível.");
+    }
+
+    const outcomes = trades.map((trade) => Number(trade.resultR));
+    const wins = outcomes.filter((result) => result > 0).length;
+    const losses = outcomes.filter((result) => result < 0).length;
+    const breakeven = outcomes.length - wins - losses;
+    const totalR = outcomes.reduce((sum, result) => sum + result, 0);
+    let equityR = 0;
+    let peakR = 0;
+    let maxDrawdownR = 0;
+    for (const result of outcomes) {
+      equityR += result;
+      peakR = Math.max(peakR, equityR);
+      maxDrawdownR = Math.max(maxDrawdownR, peakR - equityR);
+    }
+
+    const money = (value) =>
+      new Intl.NumberFormat("pt-BR", {
+        style: "currency",
+        currency: "BRL",
+        maximumFractionDigits: 2,
+      }).format(value);
+    const percent = (count) => `${((count / trades.length) * 100).toFixed(1)}%`;
+
+    riskHistoryResult.replaceChildren();
+    const summary = el("div", "radar-result-head");
+    summary.append(el("h3", null, `${trades.length} operações históricas · ${data.label}`));
+    summary.append(
+      el(
+        "p",
+        null,
+        `Yahoo Finance · candles de 5m entre ${formatDate(data.from)} e ${formatDate(data.to)} · EMA 9/21 · stop 1,5 ATR · alvo ${targetRiskReward.toFixed(2)}R.`,
+      ),
+    );
+    riskHistoryResult.append(summary);
+
+    const grid = el("div", "stats-grid");
+    grid.append(statCard("Acertos observados", percent(wins), `${wins} de ${trades.length} operações`));
+    grid.append(statCard("Perdas observadas", percent(losses), `${losses} de ${trades.length} operações`));
+    if (breakeven > 0) {
+      grid.append(statCard("Sem ganho ou perda", String(breakeven), "operações encerradas"));
+    }
+    grid.append(statCard("Resultado da amostra", `${totalR.toFixed(2)}R`, money(totalR * riskAmount)));
+    grid.append(statCard("Maior recuo", `${maxDrawdownR.toFixed(2)}R`, money(maxDrawdownR * riskAmount)));
+    riskHistoryResult.append(grid);
+
+    const details = el("details", "sweep-samples");
+    details.append(el("summary", null, `Ver as ${trades.length} operações incluídas`));
+    for (const trade of trades) {
+      const result = Number(trade.resultR);
+      const reason = trade.reason === "alvo" ? "alvo" : trade.reason === "stop" ? "stop" : "fechamento";
+      const direction = trade.direction === "LONG" ? "compra" : "venda";
+      const line = el("div", "sweep-sample");
+      line.append(
+        el(
+          "span",
+          null,
+          `${formatDate(trade.entryTime) || "horário indisponível"} · ${direction} · ${reason}`,
+        ),
+      );
+      line.append(
+        el(
+          "strong",
+          `sweep-sample-r ${result >= 0 ? "is-up" : "is-down"}`,
+          `${result > 0 ? "+" : ""}${result.toFixed(2)}R`,
+        ),
+      );
+      details.append(line);
+    }
+    riskHistoryResult.append(details);
+    riskHistoryResult.append(
+      el(
+        "p",
+        "radar-disclaimer",
+        "Amostra de até 50 operações encerradas por stop ou alvo; se houver menos, usamos apenas as disponíveis. O valor em reais considera risco fixo, sem composição do saldo. Sem taxas, spread ou slippage; histórico não indica retorno futuro.",
+      ),
+    );
+    riskHistoryResult.hidden = false;
+  }
+
+  async function startRiskHistory() {
+    if (backtestLoading || !riskHistoryRun) {
+      return;
+    }
+    const balance = Number(document.getElementById("risk-balance").value);
+    const riskPercent = Number(document.getElementById("risk-percent").value);
+    const entry = Number(document.getElementById("risk-entry").value);
+    const stop = Number(document.getElementById("risk-stop").value);
+    const target = Number(document.getElementById("risk-target").value);
+
+    if (!Number.isFinite(balance) || balance <= 0) {
+      setStatus(riskHistoryStatus, "Informe um saldo maior que zero.", "error");
+      return;
+    }
+    if (!Number.isFinite(riskPercent) || riskPercent <= 0 || riskPercent > 100) {
+      setStatus(riskHistoryStatus, "O risco precisa ficar entre 0 e 100%.", "error");
+      return;
+    }
+    if (!Number.isFinite(entry) || !Number.isFinite(stop) || entry <= 0 || stop <= 0 || entry === stop) {
+      setStatus(riskHistoryStatus, "Informe preços positivos de entrada e stop diferentes.", "error");
+      return;
+    }
+    const isLong = stop < entry;
+    if (!Number.isFinite(target) || target <= 0 || (isLong ? target <= entry : target >= entry)) {
+      setStatus(
+        riskHistoryStatus,
+        "Informe um alvo positivo do lado favorável ao stop escolhido.",
+        "error",
+      );
+      return;
+    }
+
+    const stopDistance = Math.abs(entry - stop);
+    const targetRiskReward = Math.abs(target - entry) / stopDistance;
+    const targetAtr = 1.5 * targetRiskReward;
+    if (!Number.isFinite(targetAtr) || targetAtr <= 0 || targetAtr > 100) {
+      setStatus(riskHistoryStatus, "A relação risco/retorno informada excede o limite do cálculo histórico.", "error");
+      return;
+    }
+
+    backtestLoading = true;
+    backtestRun.disabled = true;
+    if (backtestSweep) {
+      backtestSweep.disabled = true;
+    }
+    riskHistoryRun.disabled = true;
+    riskHistoryResult.hidden = true;
+    backtestToken += 1;
+    const token = backtestToken;
+    const riskAmount = balance * (riskPercent / 100);
+    setStatus(
+      riskHistoryStatus,
+      "Consultando candles históricos no Yahoo Finance…",
+    );
+    setBacktestProgress({
+      state: "running",
+      phase: "candles",
+      done: 0,
+      total: 0,
+      trades: 0,
+      elapsedMs: 0,
+    });
+
+    try {
+      const query = new URLSearchParams({
+        symbol: riskHistorySymbol.value,
+        simulations: "100",
+        targetAtr: targetAtr.toFixed(6),
+      });
+      const start = await fetchJson(`/api/backtest/start?${query}`);
+      setBacktestProgress(start);
+      const progressMessage = (progress) => {
+        if (progress.phase === "candles" && Number(progress.total) > 0) {
+          setStatus(
+            riskHistoryStatus,
+            `Lendo candles históricos: ${formatCount(progress.done)} de ${formatCount(progress.total)}.`,
+          );
+        } else if (progress.phase === "trades") {
+          setStatus(
+            riskHistoryStatus,
+            `${formatCount(progress.trades)} operações históricas apuradas; processando saídas.`,
+          );
+        } else if (progress.phase === "simulations") {
+          setStatus(
+            riskHistoryStatus,
+            `Reamostragem histórica: ${formatCount(progress.done)} de ${formatCount(progress.total)}.`,
+          );
+        }
+      };
+      let final = start;
+      if (start.state !== "done" || !start.result) {
+        final = await pollBacktest(token, progressMessage);
+      }
+      if (!final || !final.result) {
+        throw new Error("A análise histórica não retornou resultados.");
+      }
+      renderRiskHistory(final.result, riskAmount, targetRiskReward);
+      setStatus(riskHistoryStatus, "Amostra histórica concluída.", "ok");
+    } catch (error) {
+      setStatus(riskHistoryStatus, error.message, "error");
+    } finally {
+      backtestLoading = false;
+      backtestRun.disabled = false;
+      if (backtestSweep) {
+        backtestSweep.disabled = false;
+      }
+      riskHistoryRun.disabled = false;
+    }
+  }
+
+  riskHistoryRun.addEventListener("click", startRiskHistory);
 
   function renderPlan(data) {
     const plan = data.plan || {};
     planResult.replaceChildren();
-    const head = el("div", "radar-result-head");
-    head.append(el("h3", null, `${data.label} · ${data.timeframe}`));
-    head.append(
+    const head = el(
+      "div",
+      "radar-result-head flex flex-wrap items-center justify-between gap-3",
+    );
+    const heading = el("h3", "text-xl font-semibold text-zinc-100", `${data.label} · `);
+    heading.append(
       el(
-        "p",
-        null,
-        `Viés ${plan.bias} · break-even de ${plan.breakEvenWinRate}% de acerto para o alvo de ${plan.riskReward}R.`,
+        "span",
+        "rounded-full border border-white/10 bg-white/5 px-3 py-1 text-sm font-medium text-zinc-300",
+        data.timeframe,
       ),
     );
+    head.append(heading);
+    const biasTone =
+      plan.bias === "LONG" ? "text-bull ring-bull/30" : plan.bias === "SHORT" ? "text-bear ring-bear/30" : "text-zinc-300 ring-white/15";
+    const biasCopy = el("p", "flex flex-wrap items-center gap-2 text-sm text-zinc-400", "Viés ");
+    biasCopy.append(
+      el(
+        "strong",
+        `rounded-full bg-white/5 px-3 py-1 font-semibold shadow-glow ring-1 ${biasTone}`,
+        plan.bias,
+      ),
+      document.createTextNode(
+        ` · break-even de ${plan.breakEvenWinRate}% de acerto para o alvo de ${plan.riskReward}R.`,
+      ),
+    );
+    head.append(biasCopy);
     planResult.append(head);
 
-    const grid = el("div", "stats-grid");
+    const entry = Number(plan.entry);
+    const stop = Number(plan.stop);
+    const target = Number(plan.target);
+    if (
+      Number.isFinite(entry) &&
+      Number.isFinite(stop) &&
+      Number.isFinite(target) &&
+      Math.max(entry, stop, target) > Math.min(entry, stop, target)
+    ) {
+      const minimum = Math.min(entry, stop, target);
+      const range = Math.max(entry, stop, target) - minimum;
+      const position = (value) => `${((value - minimum) / range) * 100}%`;
+      const track = el("div", "relative my-5 h-2 rounded-full bg-white/10");
+      track.setAttribute("aria-hidden", "true");
+      const stopSegment = el("span", "absolute inset-y-0 rounded-full bg-bear/40");
+      stopSegment.style.left = position(Math.min(entry, stop));
+      stopSegment.style.width = `${(Math.abs(entry - stop) / range) * 100}%`;
+      const targetSegment = el("span", "absolute inset-y-0 rounded-full bg-bull/40");
+      targetSegment.style.left = position(Math.min(entry, target));
+      targetSegment.style.width = `${(Math.abs(target - entry) / range) * 100}%`;
+      const stopMarker = el("span", "absolute -top-1 h-4 w-0.5 bg-bear");
+      stopMarker.style.left = position(stop);
+      const targetMarker = el("span", "absolute -top-1 h-4 w-0.5 bg-bull");
+      targetMarker.style.left = position(target);
+      const entryMarker = el("span", "absolute -top-1 h-4 w-0.5 bg-white");
+      entryMarker.style.left = position(entry);
+      track.append(stopSegment, targetSegment, stopMarker, targetMarker, entryMarker);
+      planResult.append(track);
+    }
+
+    const grid = el("div", "stats-grid grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3");
     grid.append(statCard("Entrada", formatPrice(plan.entry), "preço atual"));
     grid.append(statCard("Stop", formatPrice(plan.stop), `risco ${formatPrice(plan.riskPerUnit)}`));
     grid.append(statCard("Alvo", formatPrice(plan.target), `ganho ${formatPrice(plan.rewardPerUnit)}`));
     grid.append(statCard("Risco/retorno", `${plan.riskReward}R`, "por unidade"));
     grid.append(statCard("ATR", formatPrice(plan.atr), `${plan.atrPercent}% do preço`));
     grid.append(statCard("Invalidação", plan.bias === "SHORT" ? "acima do stop" : "abaixo do stop", "regra do plano"));
+    const planCards = Array.from(grid.querySelectorAll(".stat-card"));
+    planCards.forEach((card) => {
+      card.classList.add("rounded-2xl", "border-white/10", "bg-white/5", "shadow-surface");
+      card.querySelector(".stat-label")?.classList.add("text-xs", "tracking-[0.18em]", "text-zinc-400");
+      card.querySelector(".stat-value")?.classList.add(
+        "text-2xl",
+        "font-semibold",
+        "text-zinc-100",
+        "tabular-nums",
+      );
+      card.querySelector(".stat-hint")?.classList.add("text-sm", "text-zinc-400");
+    });
+    planCards[1]?.classList.add("ring-1", "ring-bear/30");
+    planCards[2]?.classList.add("ring-1", "ring-bull/30");
     planResult.append(grid);
     planResult.append(
       el(
@@ -1358,9 +1963,22 @@
       setStatus(riskStatus, "O risco precisa ficar entre 0 e 100%.", "error");
       return;
     }
+    if (!Number.isFinite(entry) || !Number.isFinite(stop) || entry <= 0 || stop <= 0) {
+      setStatus(riskStatus, "Entrada e stop precisam ser preços positivos.", "error");
+      return;
+    }
     const distance = Math.abs(entry - stop);
-    if (!Number.isFinite(distance) || distance <= 0) {
+    if (distance <= 0) {
       setStatus(riskStatus, "O stop precisa ser diferente do preço de entrada.", "error");
+      return;
+    }
+    const isLong = stop < entry;
+    if (Number.isFinite(target) && target > 0 && (isLong ? target <= entry : target >= entry)) {
+      setStatus(
+        riskStatus,
+        "O alvo precisa ficar do lado favorável ao stop escolhido.",
+        "error",
+      );
       return;
     }
 
@@ -1380,6 +1998,17 @@
       grid.append(statCard("Risco/retorno", `${rr.toFixed(2)}R`, "até o alvo"));
       grid.append(statCard("Acerto mínimo", `${breakEven.toFixed(1)}%`, "para empatar no alvo"));
     }
+    grid.querySelectorAll(".stat-card").forEach((card) => {
+      card.classList.add("rounded-2xl", "border-white/10", "bg-white/5", "shadow-surface");
+      card.querySelector(".stat-label")?.classList.add("text-xs", "tracking-[0.18em]", "text-zinc-400");
+      card.querySelector(".stat-value")?.classList.add(
+        "text-2xl",
+        "font-semibold",
+        "text-zinc-100",
+        "tabular-nums",
+      );
+      card.querySelector(".stat-hint")?.classList.add("text-sm", "text-zinc-400");
+    });
     riskResult.append(grid);
     riskResult.append(
       el(
@@ -1511,6 +2140,10 @@
       chartPriceNode.textContent = formatPrice(quote.price);
       chartPriceNode.classList.remove("is-up", "is-down");
       chartPriceNode.classList.add(change >= 0 ? "is-up" : "is-down");
+      chartPriceNode.title =
+        quote.live === true && quote.source === "TradingView"
+          ? `Última leitura ao vivo recebida às ${formatClock(data.at)} · TradingView`
+          : "Sem cotação confirmada em tempo real.";
     }
     if (chartChangeNode) {
       chartChangeNode.textContent = `${formatPercent(change)} · ${data.intervalLabel}`;
@@ -1534,6 +2167,53 @@
       if (data.currency) {
         chartBadges.append(el("span", "chart-badge", String(data.currency)));
       }
+    }
+  }
+
+  function updateChartLiveQuote(snapshot) {
+    if (currentTab !== "grafico" || !chartState.data || !Array.isArray(snapshot.groups)) {
+      return;
+    }
+
+    let quote = null;
+    for (const group of snapshot.groups) {
+      quote = (Array.isArray(group.items) ? group.items : []).find(
+        (item) => item.symbol === chartState.symbol,
+      );
+      if (quote) {
+        break;
+      }
+    }
+    if (
+      !quote ||
+      quote.live !== true ||
+      quote.source !== "TradingView" ||
+      !Number.isFinite(Number(quote.price)) ||
+      Number(quote.price) <= 0 ||
+      !Number.isFinite(Number(quote.changePercent))
+    ) {
+      return;
+    }
+
+    const price = Number(quote.price);
+    const change = Number(quote.changePercent);
+    chartState.data.quote = { ...chartState.data.quote, ...quote };
+    if (chartPriceNode) {
+      chartPriceNode.textContent = formatPrice(price);
+      chartPriceNode.classList.toggle("is-up", change >= 0);
+      chartPriceNode.classList.toggle("is-down", change < 0);
+      chartPriceNode.title = `Cotação ao vivo consultada às ${formatClock(snapshot.at)} · TradingView`;
+    }
+    if (chartChangeNode) {
+      chartChangeNode.textContent = `${formatPercent(change)} · ${chartState.data.intervalLabel}`;
+      chartChangeNode.classList.toggle("is-up", change >= 0);
+      chartChangeNode.classList.toggle("is-down", change < 0);
+    }
+    const priceBadge = chartBadges?.querySelector(".chart-badge");
+    if (priceBadge) {
+      priceBadge.textContent = "TradingView · tempo real";
+      priceBadge.classList.remove("is-delayed");
+      priceBadge.classList.add("is-live");
     }
   }
 
@@ -1828,22 +2508,25 @@
     chartTooltip.classList.toggle("is-left", left < 120);
   }
 
-  async function loadChart(force) {
+  async function loadChart(force, silent = false) {
     if (!chartSvg || chartState.loading) {
       return;
     }
     if (chartState.data && !force) {
       return;
     }
+    const showLoading = !silent || !chartState.data;
     chartState.loading = true;
     if (chartRefreshButton) {
       chartRefreshButton.disabled = true;
     }
-    if (chartSkeleton) {
+    if (showLoading && chartSkeleton) {
       chartSkeleton.hidden = false;
     }
-    chartSvg.classList.add("is-loading");
-    if (chartStatus) {
+    if (showLoading) {
+      chartSvg.classList.add("is-loading");
+    }
+    if (chartStatus && showLoading) {
       chartStatus.textContent = "Buscando candles reais…";
     }
     try {
@@ -1854,11 +2537,16 @@
       renderChart(data);
       const last = data.candles[data.candles.length - 1];
       if (chartStatus) {
-        chartStatus.textContent = `${data.candles.length} candles de ${data.intervalLabel} · última em ${formatChartFullTime(last.t)}`;
+        const at = new Intl.DateTimeFormat("pt-BR", {
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+        }).format(new Date());
+        chartStatus.textContent = `${data.candles.length} candles de ${data.intervalLabel} · última em ${formatChartFullTime(last.t)} · atualizado ${at} (a cada 5 s)`;
       }
       if (chartNote) {
         chartNote.textContent =
-          "Preço: TradingView em tempo real. Série de candles: API pública do Yahoo Finance. Nenhum valor é estimado ou atrasado — se um dado falta, o gráfico avisa em vez de mostrar número velho.";
+          "Preço: TradingView em tempo real. Série de candles: API pública do Yahoo Finance, recarregada a cada 5 s. Nenhum valor é estimado ou atrasado — se um dado falta, o gráfico avisa em vez de mostrar número velho.";
       }
       if (chartCard) {
         chartCard.classList.remove("is-fresh");
@@ -1940,6 +2628,21 @@
     chartSvg.addEventListener("pointerleave", hideChartHover);
   }
 
+  // O grafico se atualiza sozinho a cada 5 s enquanto a aba Grafico estiver
+  // aberta e a pagina visivel. Sem esqueleto e sem limpar a tela: o desenho
+  // so e refeito quando a leitura real chega.
+  function scheduleChartPoll(delay = CHART_POLL_MS) {
+    window.clearTimeout(chartPollTimer);
+    chartPollTimer = window.setTimeout(async () => {
+      if (!document.hidden && currentTab === "grafico" && chartState.data) {
+        await loadChart(true, true);
+      }
+      scheduleChartPoll(CHART_POLL_MS);
+    }, delay);
+  }
+
+  let chartPollTimer = null;
   syncChartControls();
+  scheduleChartPoll(CHART_POLL_MS);
 
 })();

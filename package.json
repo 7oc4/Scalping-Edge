@@ -1,19 +1,84 @@
 {
   "name": "znx-market-analyzer",
+  "version": "1.0.0",
+  "productName": "Scalping Edge",
+  "main": "desktop/main.cjs",
   "private": true,
   "scripts": {
     "build:ts": "tsc -p tsconfig.json",
-    "check:js": "node --check assets/js/app.js && node --check assets/js/analysis-format.js && node --check assets/js/radar.js",
+    "build:ui": "vite build",
+    "build": "npm run build:ts && npm run build:ui",
+    "desktop": "electron .",
+    "dist:desktop": "npm run build && electron-builder --win nsis",
+    "check:js": "node --check assets/js/app.js && node --check assets/js/analysis-format.js && node --check assets/js/radar.js && node --check assets/js/brave-fx.js",
     "test:contract": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"Import-Module Pester -Force; Invoke-Pester -Path './tests/AnalysisContract.Tests.ps1' -EnableExit\"",
     "test:market": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"Import-Module Pester -Force; Invoke-Pester -Path './tests/Market.Tests.ps1' -EnableExit\"",
     "test:server": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"Import-Module Pester -Force; Invoke-Pester -Path './tests/Server.Tests.ps1' -EnableExit\"",
+    "test:openai": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"Import-Module Pester -Force; Invoke-Pester -Path './tests/OpenAI.Tests.ps1' -EnableExit\"",
+    "check:openai": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/check-openai.ps1",
     "replay": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/replay-analysis.ps1",
-    "test": "npm run build:ts && npm run check:js && npm run test:contract && npm run test:market && npm run test:server"
+    "test": "npm run build:ts && npm run build:ui && npm run check:js && npm run test:contract && npm run test:market && npm run test:openai && npm run test:server"
   },
   "engines": {
     "node": ">=18"
   },
   "devDependencies": {
-    "typescript": "^7.1.0-dev.20261121.1"
+    "@vitejs/plugin-react": "^4.7.0",
+    "autoprefixer": "^10.7.0",
+    "electron": "^45.5.0",
+    "electron-builder": "^26.18.0",
+    "postcss": "^8.5.33",
+    "tailwindcss": "^3.4.19",
+    "typescript": "^7.1.0-dev.20261121.1",
+    "vite": "^6.4.6"
+  },
+  "dependencies": {
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "build": {
+    "appId": "com.scalpingedge.desktop",
+    "productName": "Scalping Edge",
+    "asar": true,
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "desktop/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "pages",
+        "to": "app-runtime/pages"
+      },
+      {
+        "from": "assets",
+        "to": "app-runtime/assets"
+      },
+      {
+        "from": "src",
+        "to": "app-runtime/src"
+      },
+      {
+        "from": "prompts",
+        "to": "app-runtime/prompts"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis"
+        }
+      ],
+      "artifactName": "Scalping-Edge-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
   }
 }

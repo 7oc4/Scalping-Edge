@@ -61,13 +61,22 @@ $script:TradingViewSymbols = [ordered]@{
 }
 
 function Get-ZnxTradingViewQuotes {
-  # Cache de 1 s: o radar consulta em ritmo de tempo real e o scanner do
-  # TradingView ja atualiza a cotacao continuamente. Cache maior fazia o preco
-  # parecer congelado na tela.
-  param([int]$CacheTtlSeconds = 1)
+  # Cache curto em milissegundos: o radar consulta em ritmo de tempo real e o
+  # scanner do TradingView ja atualiza a cotacao continuamente. 250 ms evita
+  # repetir a mesma leitura dentro do mesmo tique sem parecer preco congelado.
+  param(
+    [int]$CacheTtlSeconds = 0,
+    [int]$CacheTtlMs = 250
+  )
 
-  $cached = Get-ZnxCachedValue -Key "tradingview" -TtlSeconds $CacheTtlSeconds
+  $cached = Get-ZnxCachedValue -Key "tradingview" -TtlSeconds $CacheTtlSeconds -TtlMs $CacheTtlMs
   if ($null -ne $cached) { return $cached }
+
+  # Se a fonte pediu pausa (429/5xx), nao insistimos a cada tique: isso e o
+  # que derrubava o servidor deles. A espera e curta e explicita.
+  if ($null -ne $script:TradingViewRetryAt -and [datetime]::UtcNow -lt $script:TradingViewRetryAt) {
+    throw "TradingView pediu pausa; nova leitura em instantes."
+  }
 
   $tickers = @($script:TradingViewSymbols.Values)
   if ($tickers.Count -eq 0) { return @{} }
@@ -84,7 +93,31 @@ function Get-ZnxTradingViewQuotes {
     "Accept"     = "application/json"
   }
 
-  $response = Invoke-WebRequest -Uri $script:TradingViewScanUrl -Method Post -Headers $headers -ContentType "application/json" -Body $body -UseBasicParsing -TimeoutSec 15
+  $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+  $response = $null
+  $lastError = $null
+  # Uma tentativa extra curta absorve blip de rede sem esperar o proximo ciclo.
+  for ($attempt = 0; $attempt -lt 2; $attempt++) {
+    try {
+      $response = Invoke-WebRequest -Uri $script:TradingViewScanUrl -Method Post -Headers $headers -ContentType "application/json" -Body $body -UseBasicParsing -TimeoutSec 10
+      $lastError = $null
+      break
+    }
+    catch {
+      $lastError = $_
+      $status = 0
+      try { $status = [int]$_.Exception.Response.StatusCode } catch { $status = 0 }
+      if ($status -eq 429 -or ($status -ge 500 -and $status -lt 600)) {
+        $script:TradingViewRetryAt = [datetime]::UtcNow.AddSeconds(2)
+      }
+      if ($attempt -eq 0) { Start-Sleep -Milliseconds 120 }
+    }
+  }
+  if ($null -eq $response) {
+    throw "TradingView indisponivel: $($lastError.Exception.Message)"
+  }
+  $stopwatch.Stop()
+  $readMs = [int]$stopwatch.ElapsedMilliseconds
 
   $payload = [string]$response.Content | ConvertFrom-Json
   $byTicker = @{}
@@ -120,6 +153,8 @@ function Get-ZnxTradingViewQuotes {
       currency      = $currency
       description   = [string]$data[0]
       at            = [datetime]::UtcNow.ToString("o")
+      atMs          = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+      readMs        = $readMs
     }
   }
 
@@ -188,14 +223,20 @@ function Invoke-ZnxHttpText {
 }
 
 function Get-ZnxCachedValue {
+  # TtlMs tem prioridade sobre TtlSeconds: o radar precisa de cache curto
+  # (centesimos de segundo) sem perder a compatibilidade dos candles.
   param(
     [Parameter(Mandatory = $true)][string]$Key,
-    [int]$TtlSeconds
+    [int]$TtlSeconds = 0,
+    [int]$TtlMs = 0
   )
-  if ($TtlSeconds -le 0) { return $null }
+  $ttl = $TtlMs
+  if ($ttl -le 0) { $ttl = $TtlSeconds * 1000 }
+  if ($ttl -le 0) { return $null }
   if (-not $script:MarketCache.ContainsKey($Key)) { return $null }
   $entry = $script:MarketCache[$Key]
-  if (([datetime]::UtcNow - $entry.At).TotalSeconds -ge $TtlSeconds) {
+  $ageMs = ([datetime]::UtcNow - $entry.At).TotalMilliseconds
+  if ($ageMs -ge $ttl) {
     $script:MarketCache.Remove($Key)
     return $null
   }
@@ -255,7 +296,9 @@ function ConvertFrom-ZnxBrDecimal {
 }
 
 function Get-ZnxInvestidor10Crypto {
-  param([int]$CacheTtlSeconds = 180)
+  # 60 s: a pagina do Investidor10 nao atualiza a cada segundo, e insistir
+  # mais rapido so aumentaria o risco de bloqueio sem ganho de precisao.
+  param([int]$CacheTtlSeconds = 60)
 
   $cached = Get-ZnxCachedValue -Key "investidor10|crypto" -TtlSeconds $CacheTtlSeconds
   if ($null -ne $cached) { return $cached }
@@ -432,16 +475,22 @@ function Get-ZnxMarketCandles {
     [Parameter(Mandatory = $true)][string]$Symbol,
     [string]$Range = "5d",
     [string]$Interval = "5m",
-    [int]$CacheTtlSeconds = 60
+    [int]$CacheTtlSeconds = 60,
+    [int]$CacheTtlMs = 0
   )
 
   $cacheKey = "candles|$Symbol|$Range|$Interval"
-  $cached = Get-ZnxCachedValue -Key $cacheKey -TtlSeconds $CacheTtlSeconds
+  $cached = Get-ZnxCachedValue -Key $cacheKey -TtlSeconds $CacheTtlSeconds -TtlMs $CacheTtlMs
   if ($null -ne $cached) { return $cached }
 
-  $encoded = [uri]::EscapeDataString($Symbol)
-  $uri = "$($script:YahooChartBase)/$($encoded)?range=$($Range)&interval=$($Interval)&includePrePost=false"
-  $payload = ConvertFrom-Json -InputObject (Invoke-ZnxHttpText -Uri $uri -TimeoutSec 20)
+  $prefetchedKey = "scanner-candle-payload|$Symbol|$Range|$Interval"
+  $rawPayload = Get-ZnxCachedValue -Key $prefetchedKey -TtlSeconds 60
+  if ($null -eq $rawPayload) {
+    $encoded = [uri]::EscapeDataString($Symbol)
+    $uri = "$($script:YahooChartBase)/$($encoded)?range=$($Range)&interval=$($Interval)&includePrePost=false"
+    $rawPayload = Invoke-ZnxHttpText -Uri $uri -TimeoutSec 20
+  }
+  $payload = ConvertFrom-Json -InputObject ([string]$rawPayload)
 
   if ($null -eq $payload.chart -or $null -eq $payload.chart.result -or
       @($payload.chart.result).Count -eq 0) {
@@ -697,11 +746,13 @@ function Get-ZnxChartSeries {
   $tracked = Get-ZnxTrackedSymbols
   if ($Symbol -notin $tracked) { throw "Ativo nao acompanhado pelo radar." }
 
+  # Cada periodo tem seu proprio cache curto: o grafico de 5 min se renova a
+  # cada 5 s (sem martelar o Yahoo), e periodos longos nao precisam disso.
   $intervals = @{
-    "5m"  = @{ range = "1d";  interval = "5m";  label = "5 minutos"; bars = 300 }
-    "15m" = @{ range = "5d";  interval = "15m"; label = "15 minutos"; bars = 320 }
-    "1h"  = @{ range = "1mo"; interval = "60m"; label = "1 hora"; bars = 320 }
-    "1d"  = @{ range = "6mo"; interval = "1d";  label = "1 dia"; bars = 180 }
+    "5m"  = @{ range = "1d";  interval = "5m";  label = "5 minutos"; bars = 300; cacheMs = 5000 }
+    "15m" = @{ range = "5d";  interval = "15m"; label = "15 minutos"; bars = 320; cacheMs = 15000 }
+    "1h"  = @{ range = "1mo"; interval = "60m"; label = "1 hora"; bars = 320; cacheMs = 30000 }
+    "1d"  = @{ range = "6mo"; interval = "1d";  label = "1 dia"; bars = 180; cacheMs = 60000 }
   }
   if (-not $intervals.ContainsKey($Interval)) {
     throw "Periodo invalido. Use 5m, 15m, 1h ou 1d."
@@ -709,7 +760,7 @@ function Get-ZnxChartSeries {
   $conf = $intervals[$Interval]
 
   $candles = Get-ZnxMarketCandles -Symbol $Symbol -Range ([string]$conf.range) `
-    -Interval ([string]$conf.interval) -CacheTtlSeconds 45
+    -Interval ([string]$conf.interval) -CacheTtlMs ([int]$conf.cacheMs)
 
   $quote = $null
   try {
@@ -788,12 +839,18 @@ function Get-ZnxChartSeries {
 }
 
 function Get-ZnxMarketSnapshot {
-  # 1 s: cada consulta ao /api/market devolve a leitura mais recente. O custo
-  # e baixo porque candles (90 s) e referencia em R$ (180 s) continuam em cache.
-  param([int]$CacheTtlSeconds = 1)
+  # Cache de 250 ms: cada consulta ao /api/market devolve a leitura mais
+  # recente sem repetir a chamada externa dentro do mesmo tique. O custo e
+  # baixo porque candles (90 s) e referencia em R$ (60 s) continuam em cache;
+  # so a cotacao do TradingView e relida a cada 250 ms.
+  param(
+    [int]$CacheTtlSeconds = 0,
+    [int]$CacheTtlMs = 250
+  )
 
-  $cached = Get-ZnxCachedValue -Key "snapshot" -TtlSeconds $CacheTtlSeconds
+  $cached = Get-ZnxCachedValue -Key "snapshot" -TtlSeconds $CacheTtlSeconds -TtlMs $CacheTtlMs
   if ($null -ne $cached) { return $cached }
+  $snapshotStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
 
   $groups = [ordered]@{
     forex  = @{ label = "Moedas"; items = (New-Object System.Collections.Generic.List[object]) }
@@ -840,7 +897,7 @@ function Get-ZnxMarketSnapshot {
 
     # Regra do projeto: nada atrasado. Sem cotacao em tempo real (delay 0) o
     # ativo nao entra na mesa; o Yahoo tambem atrasa bolsas e acoes em 15 min.
-    if ($null -eq $tv -or [int]$tv.delaySeconds -ne 0) {
+    if ($null -eq $tv -or $null -eq $tv.delaySeconds -or [int]$tv.delaySeconds -ne 0) {
       if (-not $failed.Contains([string]$definition.symbol)) { $failed.Add([string]$definition.symbol) }
       continue
     }
@@ -903,6 +960,14 @@ function Get-ZnxMarketSnapshot {
     throw "Nenhuma cotacao disponivel agora. Verifique a conexao com a internet."
   }
 
+  $tvReadMs = 0
+  if ($null -ne $tvQuotes -and $tvQuotes.Count -gt 0) {
+    foreach ($tvKey in $tvQuotes.Keys) {
+      $tvReadMs = [int]$tvQuotes[$tvKey].readMs
+      break
+    }
+  }
+
   $payload = [ordered]@{
     at     = [datetime]::UtcNow.ToString("o")
     groups = @(
@@ -912,11 +977,14 @@ function Get-ZnxMarketSnapshot {
     failed = $failed.ToArray()
     cryptoSource = $cryptoSource
     quotes = [ordered]@{
-      source  = "TradingView"
-      url     = "https://www.tradingview.com/markets/"
-      live    = @($groups["forex"].items + $groups["crypto"].items | Where-Object { $_.live -eq $true }).Count
-      delayed = @($groups["forex"].items + $groups["crypto"].items | Where-Object { $_.live -ne $true }).Count
+      source       = "TradingView"
+      url          = "https://www.tradingview.com/markets/"
+      live         = @($groups["forex"].items + $groups["crypto"].items | Where-Object { $_.live -eq $true }).Count
+      delayed      = @($groups["forex"].items + $groups["crypto"].items | Where-Object { $_.live -ne $true }).Count
+      cacheMs      = $CacheTtlMs
+      readMs       = $tvReadMs
     }
+    latencyMs = [int]$snapshotStopwatch.ElapsedMilliseconds
   }
 
   Set-ZnxCachedValue -Key "snapshot" -Value $payload
@@ -946,47 +1014,81 @@ function Get-ZnxNewsTags {
   return ,$tagsArray
 }
 
+function Get-ZnxRecentNewsItems {
+  param(
+    [object[]]$Items = @(),
+    [datetime]$NowUtc = [datetime]::UtcNow
+  )
+
+  $now = $NowUtc.ToUniversalTime()
+  $cutoff = $now.AddHours(-24)
+  $dateStyles = [System.Globalization.DateTimeStyles]::AssumeUniversal -bor
+    [System.Globalization.DateTimeStyles]::AdjustToUniversal
+  $recent = New-Object System.Collections.Generic.List[object]
+
+  foreach ($item in $Items) {
+    $publishedAt = [datetime]::MinValue
+    if (-not [datetime]::TryParse(
+        [string]$item.publishedAt,
+        [System.Globalization.CultureInfo]::InvariantCulture,
+        $dateStyles,
+        [ref]$publishedAt
+      )) {
+      continue
+    }
+    if ($publishedAt -lt $cutoff -or $publishedAt -gt $now) { continue }
+    $item.publishedAt = $publishedAt.ToString("o")
+    $recent.Add($item)
+  }
+
+  return @($recent.ToArray() | Sort-Object { [datetime]$_.publishedAt } -Descending)
+}
+
 function Get-ZnxMarketNews {
-  param([int]$MaxItems = 600, [int]$CacheTtlSeconds = 120)
+  param([int]$MaxItems = 600, [int]$CacheTtlSeconds = 60)
 
   $cached = Get-ZnxCachedValue -Key "news" -TtlSeconds $CacheTtlSeconds
   if ($null -ne $cached) {
-    $cachedItems = @($cached.items)
+    $cachedItems = @(Get-ZnxRecentNewsItems -Items @($cached.items))
     if ($MaxItems -gt 0 -and $cachedItems.Count -gt $MaxItems) {
       $cachedItems = $cachedItems[0..($MaxItems - 1)]
     }
+    $cachedSources = @($cachedItems | ForEach-Object { [string]$_.source } | Select-Object -Unique)
     return [ordered]@{
       at          = $cached.at
       items       = $cachedItems
       count       = $cachedItems.Count
-      total       = @($cached.items).Count
+      total       = $cachedItems.Count
       failedFeeds = $cached.failedFeeds
-      sources     = $cached.sources
+      sources     = $cachedSources
       translated  = 0
-      window      = "manchetes de economia e mercados, em portugues"
+      window      = "noticias com publicacao verificavel nas ultimas 24 horas"
+      windowHours = 24
     }
   }
 
-  # Google Noticias entrega ~100 manchetes por consulta; os feeds dos veiculos
-  # completam a lista. Tudo em portugues, sem traducao automatica: assim a
-  # lista passa de 500 itens sem estourar limite de API de traducao.
+  # A busca e publica e nao usa IA. O operador temporal do Google reduz o feed;
+  # a data publicada ainda e validada localmente antes de exibir qualquer item.
   $queries = @(
-    "economia",
+    "bitcoin OR criptomoedas",
+    "forex OR cambio OR moedas",
+    "bolsa americana OR Wall Street OR acoes dos Estados Unidos",
+    "Nasdaq OR S&P 500 OR Dow Jones",
+    "trading OR day trade OR analise tecnica",
     "mercado financeiro",
-    "dolar hoje",
-    "criptomoedas",
-    "bolsa de valores",
-    "inflacao",
-    "juros selic",
+    "dolar OR cambio",
+    "inflacao OR IPCA",
+    "juros OR Federal Reserve OR Fed",
     "commodities",
     "ibovespa",
     "banco central"
   )
   $feeds = New-Object System.Collections.Generic.List[object]
   foreach ($query in $queries) {
+    $recentQuery = "$query when:1d"
     $feeds.Add(@{
       name = "Google Noticias"
-      url  = "https://news.google.com/rss/search?q=$([uri]::EscapeDataString($query))&hl=pt-BR&gl=BR&ceid=BR:pt-419"
+      url  = "https://news.google.com/rss/search?q=$([uri]::EscapeDataString($recentQuery))&hl=pt-BR&gl=BR&ceid=BR:pt-419"
     })
   }
   $feeds.Add(@{ name = "G1 Economia";   url = "https://g1.globo.com/rss/g1/economia/" })
@@ -997,10 +1099,8 @@ function Get-ZnxMarketNews {
   $seen = @{}
   $items = New-Object System.Collections.Generic.List[object]
   $errors = 0
-  $sources = New-Object System.Collections.Generic.List[string]
-
   # Feeds em paralelo: a pagina de noticias nao pode segurar o radar. Antes o
-  # download era sequencial (14 feeds x ate 15 s) e travava o servidor inteiro
+  # download era sequencial (16 feeds x ate 15 s) e travava o servidor inteiro
   # por dezenas de segundos quando um feed demorava.
   $feedPayloads = @{}
   $httpClient = [System.Net.Http.HttpClient]::new()
@@ -1048,8 +1148,6 @@ function Get-ZnxMarketNews {
         $titleNode = $item.SelectSingleNode("title")
         if ($null -ne $titleNode) { $title = ([string]$titleNode.InnerText).Trim() }
         if ([string]::IsNullOrWhiteSpace($title)) { continue }
-        if ([string]::IsNullOrWhiteSpace($title)) { continue }
-
         $sourceName = [string]$feed.name
         $sourceNode = $item.SelectSingleNode("source")
         if ($null -ne $sourceNode -and -not [string]::IsNullOrWhiteSpace([string]$sourceNode.InnerText)) {
@@ -1074,8 +1172,6 @@ function Get-ZnxMarketNews {
         }
         catch { $publishedAt = "" }
 
-        if (-not $sources.Contains($sourceName)) { $sources.Add($sourceName) }
-
         $items.Add([ordered]@{
           title         = $title
           titlePt       = $title
@@ -1093,16 +1189,18 @@ function Get-ZnxMarketNews {
     }
   }
 
-  if ($items.Count -eq 0) {
-    throw "Nenhuma noticia disponivel agora. Verifique a conexao com a internet."
+  $recentItems = @(Get-ZnxRecentNewsItems -Items $items.ToArray())
+  if ($recentItems.Count -eq 0 -and $errors -ge $feeds.Count) {
+    throw "Todos os feeds de noticias falharam; nao foi possivel verificar a janela das ultimas 24 horas."
   }
 
-  $ordered = @($items | Sort-Object { [string]$_.publishedAt } -Descending)
+  $ordered = $recentItems
+  $recentSources = @($ordered | ForEach-Object { [string]$_.source } | Select-Object -Unique)
   $payload = [ordered]@{
     at          = [datetime]::UtcNow.ToString("o")
     items       = $ordered
     failedFeeds = $errors
-    sources     = $sources.ToArray()
+    sources     = $recentSources
   }
   Set-ZnxCachedValue -Key "news" -Value $payload
 
@@ -1119,7 +1217,8 @@ function Get-ZnxMarketNews {
     failedFeeds = $errors
     sources     = $payload.sources
     translated  = 0
-    window      = "manchetes de economia e mercados, em portugues"
+    window      = "noticias com publicacao verificavel nas ultimas 24 horas"
+    windowHours = 24
   }
 }
 
@@ -1127,13 +1226,21 @@ function Get-ZnxMarketNews {
 # VARREDOR
 # =====================================================================
 function Get-ZnxSetupScore {
+  # Fatores extras sao opcionais: sem eles (0 / 0.5 / 1) a conta e exatamente
+  # a mesma de antes, o que mantem os testes e a leitura antiga validos.
   param(
     [double]$TrendAtr,
     [double]$Rsi,
     [bool]$BreakoutUp,
     [bool]$BreakoutDown,
     [double]$VolumeRatio,
-    [double]$ExtensionAtr
+    [double]$ExtensionAtr,
+    [double]$MomentumAtr = 0,
+    [double]$HigherTrendAtr = 0,
+    [double]$RangePosition = 0.5,
+    # -1 = rompimento nao avaliado (mantem a conta antiga intacta).
+    [double]$Freshness = -1,
+    [double]$VolatilityRatio = 1
   )
   $score = [Math]::Max(-25.0, [Math]::Min(25.0, $TrendAtr * 12.0))
   if ($Rsi -ge 55) { $score += 12 }
@@ -1148,88 +1255,378 @@ function Get-ZnxSetupScore {
   if ($ExtensionAtr -gt 2.5 -and $TrendAtr -ne 0) {
     $score -= 10.0 * [Math]::Sign($TrendAtr)
   }
+  # Momentum dos ultimos candles, normalizado por ATR: confirma ou contraria
+  # a inclinacao das EMAs sem repetir o mesmo peso da tendencia.
+  if ($MomentumAtr -ne 0 -and -not [double]::IsNaN($MomentumAtr)) {
+    $score += [Math]::Min(14.0, [Math]::Abs($MomentumAtr) * 7.0) * [Math]::Sign($MomentumAtr)
+  }
+  # EMA 50 contra EMA 21: tendencia de prazo maior so confirma a direcao.
+  if ($HigherTrendAtr -ne 0 -and -not [double]::IsNaN($HigherTrendAtr)) {
+    $score += [Math]::Min(10.0, [Math]::Abs($HigherTrendAtr) * 6.0) * [Math]::Sign($HigherTrendAtr)
+  }
+  # Rompimento recem-feito vale mais que rompimento velho; depois de 6 candles
+  # o bonus some, porque a continuacao ja foi precificada.
+  if (($BreakoutUp -or $BreakoutDown) -and $Freshness -ge 0) {
+    $fresh = [Math]::Max(0.0, 1.0 - ($Freshness / 6.0))
+    if ($BreakoutUp) { $score += 10.0 * $fresh }
+    if ($BreakoutDown) { $score -= 10.0 * $fresh }
+  }
+  # Preco no extremo da faixa de 20 candles a favor da tendencia = continuacao;
+  # no meio da faixa o sinal perde forca.
+  if ($TrendAtr -ne 0) {
+    $position = [Math]::Max(0.0, [Math]::Min(1.0, $RangePosition))
+    $edge = if ($TrendAtr -gt 0) { $position } else { 1.0 - $position }
+    $score += ($edge - 0.5) * 12.0 * [Math]::Sign($TrendAtr)
+  }
+  # Volatilidade muito abaixo da media: movimento sem combustivel.
+  if ($VolatilityRatio -gt 0 -and $VolatilityRatio -lt 0.7) { $score *= 0.85 }
   return [Math]::Round([Math]::Max(-100.0, [Math]::Min(100.0, $score)), 1)
 }
 
-function Get-ZnxScanner {
-  param([int]$CacheTtlSeconds = 240)
+function Get-ZnxSetupConfidence {
+  # Indice de forca do sinal (0-100), NAO probabilidade de acerto: mede
+  # quanto os fatores concordam entre si. Sem concordancia fica perto de 50.
+  param(
+    [double]$Score,
+    [double]$MomentumAtr = 0,
+    [double]$HigherTrendAtr = 0,
+    [double]$ExtensionAtr = 0,
+    [double]$VolatilityRatio = 1
+  )
+  $confidence = 50.0 + ([Math]::Abs($Score) * 0.42)
+  $direction = [Math]::Sign($Score)
+  if ($direction -ne 0) {
+    if ([Math]::Sign($MomentumAtr) -eq $direction) { $confidence += 5.0 }
+    if ([Math]::Sign($HigherTrendAtr) -eq $direction) { $confidence += 5.0 }
+    if ([Math]::Sign($MomentumAtr) -ne 0 -and [Math]::Sign($MomentumAtr) -ne $direction) { $confidence -= 6.0 }
+    if ([Math]::Sign($HigherTrendAtr) -ne 0 -and [Math]::Sign($HigherTrendAtr) -ne $direction) { $confidence -= 6.0 }
+  }
+  if ($ExtensionAtr -gt 3.0) { $confidence -= 5.0 }
+  if ($VolatilityRatio -gt 0 -and $VolatilityRatio -lt 0.7) { $confidence -= 4.0 }
+  return [Math]::Round([Math]::Max(5.0, [Math]::Min(95.0, $confidence)), 0)
+}
 
-  $cached = Get-ZnxCachedValue -Key "scanner" -TtlSeconds $CacheTtlSeconds
+function Get-ZnxBreakoutFreshness {
+  # Quantos candles o preco ja esta do lado de fora do nivel (0 = agora).
+  # Devolve -1 quando nao ha rompimento.
+  param(
+    [Parameter(Mandatory = $true)][double[]]$Close,
+    [double]$Level,
+    [bool]$Up
+  )
+  $count = $Close.Length
+  $bars = -1
+  for ($i = $count - 1; $i -ge [Math]::Max(0, $count - 61); $i--) {
+    $beyond = if ($Up) { $Close[$i] -gt $Level } else { $Close[$i] -lt $Level }
+    if (-not $beyond) { break }
+    $bars = $count - 1 - $i
+  }
+  return $bars
+}
+
+function Get-ZnxScanIndicators {
+  # Indicadores que nao mudam dentro de um candle de 5 minutos. Ficam em cache
+  # por 60 s; o preco ao vivo entra depois, na hora de pontuar.
+  param([Parameter(Mandatory = $true)]$Candles)
+
+  $close = $Candles.Close
+  $high = $Candles.High
+  $low = $Candles.Low
+  $volume = $Candles.Volume
+  $count = $close.Length
+  if ($count -lt 60) { throw "Poucos candles para analisar." }
+
+  $ema9 = Get-ZnxEmaSeries -Values $close -Period 9
+  $ema21 = Get-ZnxEmaSeries -Values $close -Period 21
+  $ema50 = Get-ZnxEmaSeries -Values $close -Period 50
+  $rsiSeries = Get-ZnxRsiSeries -Values $close -Period 14
+  $atrSeries = Get-ZnxAtrSeries -High $high -Low $low -Close $close -Period 14
+
+  $last = $count - 1
+  $atr = [double]$atrSeries[$last]
+  if ($atr -le 0) { throw "ATR invalido." }
+
+  $lookbackStart = [Math]::Max(0, $count - 21)
+  $rangeHigh = [double]::MinValue
+  $rangeLow = [double]::MaxValue
+  for ($i = $lookbackStart; $i -lt $last; $i++) {
+    if ($high[$i] -gt $rangeHigh) { $rangeHigh = $high[$i] }
+    if ($low[$i] -lt $rangeLow) { $rangeLow = $low[$i] }
+  }
+  if ($rangeHigh -le $rangeLow) { throw "Faixa de 20 candles invalida." }
+
+  $volumeSum = 0.0
+  $volumeCount = 0
+  for ($i = [Math]::Max(0, $count - 21); $i -lt $last; $i++) {
+    $volumeSum += $volume[$i]
+    $volumeCount++
+  }
+  $avgVolume = 0.0
+  if ($volumeCount -gt 0) { $avgVolume = $volumeSum / $volumeCount }
+  $volumeRatio = 0.0
+  if ($avgVolume -gt 0) { $volumeRatio = [double]$volume[$last] / $avgVolume }
+
+  # Volatilidade relativa: ATR atual contra a media dos ultimos 50 candles.
+  $atrSum = 0.0
+  $atrCount = 0
+  for ($i = [Math]::Max(0, $last - 50); $i -le $last; $i++) {
+    $atrSum += [double]$atrSeries[$i]
+    $atrCount++
+  }
+  $volatilityRatio = 1.0
+  if ($atrCount -gt 0 -and ($atrSum / $atrCount) -gt 0) {
+    $volatilityRatio = $atr / ($atrSum / $atrCount)
+  }
+
+  $momentumAtr = 0.0
+  if ($last -ge 5) { $momentumAtr = ($close[$last] - $close[$last - 5]) / $atr }
+
+  $higherTrendAtr = ([double]$ema50[$last] - [double]$ema21[$last]) / $atr
+  $slopeAtr = 0.0
+  if ($last -ge 10) { $slopeAtr = ([double]$ema21[$last] - [double]$ema21[$last - 10]) / $atr }
+
+  $price = [double]$Candles.Price
+  $changePercent = 0.0
+  if ($Candles.PreviousClose -gt 0) {
+    $changePercent = (($price - [double]$Candles.PreviousClose) / [double]$Candles.PreviousClose) * 100.0
+  }
+
+  return [ordered]@{
+    price          = $price
+    previousClose  = [double]$Candles.PreviousClose
+    changePercent  = $changePercent
+    ema9           = [double]$ema9[$last]
+    ema21          = [double]$ema21[$last]
+    ema50          = [double]$ema50[$last]
+    rsi            = [double]$rsiSeries[$last]
+    atr            = $atr
+    atrPercent     = ($atr / $price) * 100.0
+    rangeHigh      = $rangeHigh
+    rangeLow       = $rangeLow
+    volumeRatio    = $volumeRatio
+    volatilityRatio = $volatilityRatio
+    momentumAtr    = $momentumAtr
+    higherTrendAtr = $higherTrendAtr
+    slopeAtr       = $slopeAtr
+    candles        = $count
+    # Conta real de pontos de serie calculados (6 indicadores x candles).
+    calculations   = $count * 6
+    High           = $high
+    Low            = $low
+    Close          = $close
+    Volume         = $volume
+  }
+}
+
+function Get-ZnxScannerCandlePayloads {
+  param([Parameter(Mandatory = $true)][string[]]$Symbols)
+
+  $payloads = @{}
+  $failures = @{}
+  $batchSize = 4
+  $timeoutMs = 20000
+  for ($offset = 0; $offset -lt $Symbols.Count; $offset += $batchSize) {
+    $jobs = New-Object System.Collections.Generic.List[object]
+    $end = [Math]::Min($Symbols.Count - 1, $offset + $batchSize - 1)
+    for ($index = $offset; $index -le $end; $index++) {
+      $symbol = [string]$Symbols[$index]
+      $client = $null
+      try {
+        $client = New-Object System.Net.WebClient
+        $client.Headers.Add("User-Agent", [string]$script:YahooHeaders["User-Agent"])
+        $client.Headers.Add("Accept", [string]$script:YahooHeaders["Accept"])
+        $encoded = [uri]::EscapeDataString($symbol)
+        $uri = "$($script:YahooChartBase)/$($encoded)?range=5d&interval=5m&includePrePost=false"
+        $task = $client.DownloadStringTaskAsync($uri)
+        $jobs.Add([ordered]@{ Symbol = $symbol; Client = $client; Task = $task })
+      }
+      catch {
+        if ($null -ne $client) { $client.Dispose() }
+        $failures[$symbol] = $_.Exception.Message
+      }
+    }
+
+    $batchStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+    foreach ($job in $jobs) {
+      try {
+        $remainingMs = [Math]::Max(0, $timeoutMs - [int]$batchStopwatch.ElapsedMilliseconds)
+        if ($remainingMs -eq 0 -or -not $job.Task.Wait($remainingMs)) {
+          $failures[[string]$job.Symbol] = "Tempo limite ao carregar candles do Yahoo Finance."
+          continue
+        }
+        $rawPayload = [string]$job.Task.Result
+        if ([string]::IsNullOrWhiteSpace($rawPayload)) {
+          throw "Resposta vazia do Yahoo Finance."
+        }
+        $payloads[[string]$job.Symbol] = $rawPayload
+      }
+      catch {
+        $failures[[string]$job.Symbol] = $_.Exception.Message
+      }
+      finally {
+        $job.Client.Dispose()
+      }
+    }
+  }
+
+  return [pscustomobject]@{
+    Payloads = $payloads
+    Failures = $failures
+  }
+}
+
+function Get-ZnxScanner {
+  # 2 s: o varredor acompanha o preco ao vivo do TradingView. Os indicadores
+  # (candles de 5 min) ficam 60 s em cache por ativo; so a cotacao e relida a
+  # cada tique, entao a varredura continua barata para a fonte publica.
+  param(
+    [int]$CacheTtlSeconds = 2,
+    [int]$CacheTtlMs = 2000
+  )
+
+  $cached = Get-ZnxCachedValue -Key "scanner" -TtlSeconds $CacheTtlSeconds -TtlMs $CacheTtlMs
   if ($null -ne $cached) { return $cached }
 
+  $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
   $items = New-Object System.Collections.Generic.List[object]
   $failed = New-Object System.Collections.Generic.List[string]
+  $calculations = 0
+
+  $tvQuotes = @{}
+  try { $tvQuotes = Get-ZnxTradingViewQuotes }
+  catch { Write-Verbose "TradingView indisponivel no varredor: $($_.Exception.Message)" }
+
+  $scanCandleSymbols = New-Object System.Collections.Generic.List[string]
+  foreach ($definition in $script:ScanUniverse) {
+    $symbol = [string]$definition.symbol
+    $tv = $null
+    if ($tvQuotes.ContainsKey($symbol)) { $tv = $tvQuotes[$symbol] }
+    if ($null -eq $tv -or $null -eq $tv.delaySeconds -or [int]$tv.delaySeconds -ne 0) {
+      continue
+    }
+
+    $analysis = Get-ZnxCachedValue -Key "scan-analysis|$symbol" -TtlSeconds 60
+    if ($null -eq $analysis) {
+      $candles = Get-ZnxCachedValue -Key "candles|$symbol|5d|5m" -TtlSeconds 120
+      if ($null -eq $candles) { $scanCandleSymbols.Add($symbol) }
+    }
+  }
+
+  $scanCandleFailures = @{}
+  if ($scanCandleSymbols.Count -gt 0) {
+    $prefetched = Get-ZnxScannerCandlePayloads -Symbols $scanCandleSymbols.ToArray()
+    foreach ($entry in $prefetched.Payloads.GetEnumerator()) {
+      Set-ZnxCachedValue `
+        -Key "scanner-candle-payload|$($entry.Key)|5d|5m" `
+        -Value ([string]$entry.Value)
+    }
+    foreach ($entry in $prefetched.Failures.GetEnumerator()) {
+      $scanCandleFailures[[string]$entry.Key] = [string]$entry.Value
+    }
+  }
 
   foreach ($definition in $script:ScanUniverse) {
     $symbol = [string]$definition.symbol
+    $tv = $null
+    if ($tvQuotes.ContainsKey($symbol)) { $tv = $tvQuotes[$symbol] }
+    if ($null -eq $tv -or [int]$tv.delaySeconds -ne 0) {
+      $failed.Add($symbol)
+      continue
+    }
+
     try {
-      $candles = Get-ZnxMarketCandles -Symbol $symbol -Range "5d" -Interval "5m" `
-        -CacheTtlSeconds 180
-      $close = $candles.Close
-      $high = $candles.High
-      $low = $candles.Low
-      $volume = $candles.Volume
-      $count = $close.Length
-      if ($count -lt 40) { throw "Poucos candles." }
-
-      $ema9 = Get-ZnxEmaSeries -Values $close -Period 9
-      $ema21 = Get-ZnxEmaSeries -Values $close -Period 21
-      $rsiSeries = Get-ZnxRsiSeries -Values $close -Period 14
-      $atrSeries = Get-ZnxAtrSeries -High $high -Low $low -Close $close -Period 14
-
-      $last = $count - 1
-      $price = [double]$candles.Price
-      $atr = [double]$atrSeries[$last]
-      if ($atr -le 0) { throw "ATR invalido." }
-
-      $trendAtr = ([double]$ema9[$last] - [double]$ema21[$last]) / $atr
-      $rsi = [double]$rsiSeries[$last]
-
-      $lookbackStart = [Math]::Max(0, $count - 21)
-      $rangeHigh = [double]::MinValue
-      $rangeLow = [double]::MaxValue
-      for ($i = $lookbackStart; $i -lt $last; $i++) {
-        if ($high[$i] -gt $rangeHigh) { $rangeHigh = $high[$i] }
-        if ($low[$i] -lt $rangeLow) { $rangeLow = $low[$i] }
+      $analysis = Get-ZnxCachedValue -Key "scan-analysis|$symbol" -TtlSeconds 60
+      if ($null -eq $analysis) {
+        if ($scanCandleFailures.ContainsKey($symbol)) {
+          throw "Candles indisponiveis para $symbol."
+        }
+        $candles = Get-ZnxMarketCandles -Symbol $symbol -Range "5d" -Interval "5m" `
+          -CacheTtlSeconds 120
+        $analysis = Get-ZnxScanIndicators -Candles $candles
+        Set-ZnxCachedValue -Key "scan-analysis|$symbol" -Value $analysis
       }
+      $calculations += [int]$analysis.calculations
+
+      $price = [double]$tv.price
+      $changePercent = [double]$tv.changePercent
+      $quoteSource = "TradingView"
+      if ($price -le 0 -or [double]::IsNaN($price) -or [double]::IsInfinity($price)) {
+        throw "Preco invalido."
+      }
+
+      $atr = [double]$analysis.atr
+      $trendAtr = ([double]$analysis.ema9 - [double]$analysis.ema21) / $atr
+      $rsi = [double]$analysis.rsi
+      $rangeHigh = [double]$analysis.rangeHigh
+      $rangeLow = [double]$analysis.rangeLow
       $breakoutUp = $price -gt $rangeHigh
       $breakoutDown = $price -lt $rangeLow
-
-      $volumeSum = 0.0
-      $volumeCount = 0
-      for ($i = [Math]::Max(0, $count - 21); $i -lt $last; $i++) {
-        $volumeSum += $volume[$i]
-        $volumeCount++
+      $rangePosition = ($price - $rangeLow) / ($rangeHigh - $rangeLow)
+      $rangePosition = [Math]::Max(0.0, [Math]::Min(1.0, $rangePosition))
+      $freshness = 0
+      if ($breakoutUp) {
+        $freshness = Get-ZnxBreakoutFreshness -Close $analysis.Close -Level $rangeHigh -Up $true
       }
-      $avgVolume = 0.0
-      if ($volumeCount -gt 0) { $avgVolume = $volumeSum / $volumeCount }
-      $volumeRatio = 0.0
-      if ($avgVolume -gt 0) { $volumeRatio = [double]$volume[$last] / $avgVolume }
+      elseif ($breakoutDown) {
+        $freshness = Get-ZnxBreakoutFreshness -Close $analysis.Close -Level $rangeLow -Up $false
+      }
+      $extension = [Math]::Abs($price - [double]$analysis.ema21) / $atr
 
-      $extension = [Math]::Abs($price - [double]$ema21[$last]) / $atr
       $score = Get-ZnxSetupScore -TrendAtr $trendAtr -Rsi $rsi `
         -BreakoutUp $breakoutUp -BreakoutDown $breakoutDown `
-        -VolumeRatio $volumeRatio -ExtensionAtr $extension
+        -VolumeRatio ([double]$analysis.volumeRatio) -ExtensionAtr $extension `
+        -MomentumAtr ([double]$analysis.momentumAtr) `
+        -HigherTrendAtr ([double]$analysis.higherTrendAtr) `
+        -RangePosition $rangePosition -Freshness $freshness `
+        -VolatilityRatio ([double]$analysis.volatilityRatio)
+
+      $confidence = Get-ZnxSetupConfidence -Score $score `
+        -MomentumAtr ([double]$analysis.momentumAtr) `
+        -HigherTrendAtr ([double]$analysis.higherTrendAtr) `
+        -ExtensionAtr $extension `
+        -VolatilityRatio ([double]$analysis.volatilityRatio)
 
       $signal = "NEUTRAL"
       if ($score -ge 35) { $signal = "LONG" }
       elseif ($score -le -35) { $signal = "SHORT" }
 
+      $plan = Get-ZnxTradePlan -High $analysis.High -Low $analysis.Low `
+        -Close $analysis.Close -Price $price
+
+      $change5m = 0.0
+      $closeSeries = $analysis.Close
+      if ($closeSeries.Length -ge 6) {
+        $reference = [double]$closeSeries[$closeSeries.Length - 6]
+        if ($reference -gt 0) { $change5m = (($price - $reference) / $reference) * 100.0 }
+      }
+
       $reasons = New-Object System.Collections.Generic.List[string]
       if ($trendAtr -gt 0.15) { $reasons.Add("EMA 9 acima da EMA 21") }
       elseif ($trendAtr -lt -0.15) { $reasons.Add("EMA 9 abaixo da EMA 21") }
-      if ($breakoutUp) { $reasons.Add("rompeu a maxima de 20 candles") }
-      if ($breakoutDown) { $reasons.Add("perdeu a minima de 20 candles") }
+      if ($breakoutUp) {
+        if ($freshness -le 1) { $reasons.Add("rompeu a maxima de 20 candles agora") }
+        else { $reasons.Add("rompeu a maxima ha $freshness candles") }
+      }
+      if ($breakoutDown) {
+        if ($freshness -le 1) { $reasons.Add("perdeu a minima de 20 candles agora") }
+        else { $reasons.Add("perdeu a minima ha $freshness candles") }
+      }
       if ($rsi -ge 70) { $reasons.Add("RSI esticado em $([Math]::Round($rsi, 0))") }
       elseif ($rsi -le 30) { $reasons.Add("RSI comprimido em $([Math]::Round($rsi, 0))") }
-      if ($volumeRatio -ge 1.3) { $reasons.Add("volume $([Math]::Round($volumeRatio, 1))x a media") }
-      if ($extension -gt 2.5) { $reasons.Add("preco distante da EMA 21") }
-      if ($reasons.Count -eq 0) { $reasons.Add("sem sinal claro no momento") }
-
-      $changePercent = 0.0
-      if ($candles.PreviousClose -gt 0) {
-        $changePercent = (($price - $candles.PreviousClose) / $candles.PreviousClose) * 100.0
+      if ([double]$analysis.volumeRatio -ge 1.3) {
+        $reasons.Add("volume $([Math]::Round([double]$analysis.volumeRatio, 1))x a media")
       }
+      if ([Math]::Abs([double]$analysis.momentumAtr) -ge 0.35) {
+        $side = if ([double]$analysis.momentumAtr -gt 0) { "acima" } else { "abaixo" }
+        $reasons.Add("momentum $side da abertura de 5 candles")
+      }
+      if ([double]$analysis.higherTrendAtr -ne 0 -and
+          [Math]::Sign([double]$analysis.higherTrendAtr) -eq [Math]::Sign($trendAtr)) {
+        $reasons.Add("EMA 50 confirma a direcao")
+      }
+      if ($extension -gt 2.5) { $reasons.Add("preco distante da EMA 21") }
+      if ([double]$analysis.volatilityRatio -lt 0.7) { $reasons.Add("volatilidade baixa para o padrao") }
+      if ($reasons.Count -eq 0) { $reasons.Add("sem sinal claro no momento") }
 
       $items.Add([ordered]@{
         symbol        = $symbol
@@ -1237,11 +1634,21 @@ function Get-ZnxScanner {
         group         = [string]$definition.group
         price         = [Math]::Round($price, 6)
         changePercent = [Math]::Round($changePercent, 2)
+        change5m      = [Math]::Round($change5m, 2)
         score         = $score
+        confidence    = $confidence
         signal        = $signal
         rsi           = [Math]::Round($rsi, 1)
         atrPercent    = [Math]::Round(($atr / $price) * 100.0, 2)
-        volumeRatio   = [Math]::Round($volumeRatio, 2)
+        volumeRatio   = [Math]::Round([double]$analysis.volumeRatio, 2)
+        volatilityRatio = [Math]::Round([double]$analysis.volatilityRatio, 2)
+        rangePosition = [Math]::Round($rangePosition * 100.0, 0)
+        freshness     = $freshness
+        quoteSource   = $quoteSource
+        entry         = $plan.entry
+        stop          = $plan.stop
+        target        = $plan.target
+        riskReward    = $plan.riskReward
         reasons       = $reasons.ToArray()
       })
     }
@@ -1260,6 +1667,8 @@ function Get-ZnxScanner {
     scanned  = $items.Count
     failed   = $failed.ToArray()
     timeframe = "5m"
+    calculations = $calculations
+    latencyMs = [int]$stopwatch.ElapsedMilliseconds
     items    = $sorted
   }
   Set-ZnxCachedValue -Key "scanner" -Value $payload
@@ -1269,6 +1678,42 @@ function Get-ZnxScanner {
 # =====================================================================
 # MAQUINA DO TEMPO (backtest 60 dias / 5m + 10 mil simulacoes)
 # =====================================================================
+function Get-ZnxBacktestSignals {
+  # Calcula EMAs, ATR e as posicoes de cruzamento UMA vez. O sweep reusa esse
+  # resultado em todas as combinacoes de stop/alvo do mesmo ativo, sem repetir
+  # 17 mil candles por combinacao.
+  param(
+    [Parameter(Mandatory = $true)][double[]]$High,
+    [Parameter(Mandatory = $true)][double[]]$Low,
+    [Parameter(Mandatory = $true)][double[]]$Close
+  )
+  $ema9 = Get-ZnxEmaSeries -Values $Close -Period 9
+  $ema21 = Get-ZnxEmaSeries -Values $Close -Period 21
+  $atrSeries = Get-ZnxAtrSeries -High $High -Low $Low -Close $Close -Period 14
+
+  $items = New-Object System.Collections.Generic.List[object]
+  $count = $Close.Length
+  for ($i = 31; $i -lt $count - 2; $i++) {
+    $atr = [double]$atrSeries[$i]
+    if ($atr -le 0) { continue }
+    $previousUp = $ema9[$i - 1] -le $ema21[$i - 1]
+    $currentUp = $ema9[$i] -gt $ema21[$i]
+    $previousDown = $ema9[$i - 1] -ge $ema21[$i - 1]
+    $currentDown = $ema9[$i] -lt $ema21[$i]
+    $crossUp = $previousUp -and $currentUp
+    $crossDown = $previousDown -and $currentDown
+    if (-not $crossUp -and -not $crossDown) { continue }
+    $items.Add([pscustomobject]@{ Index = $i; Long = $crossUp; Atr = $atr })
+  }
+
+  return [pscustomobject]@{
+    Ema9  = $ema9
+    Ema21 = $ema21
+    Atr   = $atrSeries
+    Items = $items.ToArray()
+  }
+}
+
 function Invoke-ZnxBacktestCore {
   param(
     [Parameter(Mandatory = $true)][double[]]$OpenPrices,
@@ -1280,6 +1725,13 @@ function Invoke-ZnxBacktestCore {
     [int]$Simulations = 10000,
     [int]$Seed = 42,
     [int]$MaxBarsPerTrade = 200,
+    # Detalhes reais de cada operacao: entrada, saida, motivo e resultado.
+    [switch]$CollectTrades,
+    [int]$MaxTradeDetails = 60,
+    # Series de tempo (segundos) so para rotular a hora de entrada/saida.
+    [long[]]$Timestamps,
+    # Sinais pre-calculados (Get-ZnxBacktestSignals) reutilizados pelo sweep.
+    $Signals = $null,
     # Hashtable sincronizada opcional: recebe o progresso REAL do calculo
     # (candles processados, trades encontrados e reamostragens concluidas).
     [hashtable]$Progress = $null
@@ -1310,6 +1762,8 @@ function Invoke-ZnxBacktestCore {
     stopAtr        = $StopAtr
     targetAtr      = $TargetAtr
     maxBarsPerTrade = $MaxBarsPerTrade
+    calculations   = $count
+    tradeDetails   = @()
   }
   if ($count -lt 60) {
     if ($null -ne $Progress) {
@@ -1328,34 +1782,31 @@ function Invoke-ZnxBacktestCore {
     $Progress["trades"] = 0
   }
 
-  $ema9 = Get-ZnxEmaSeries -Values $Close -Period 9
-  $ema21 = Get-ZnxEmaSeries -Values $Close -Period 21
-  $atrSeries = Get-ZnxAtrSeries -High $High -Low $Low -Close $Close -Period 14
+  if ($null -eq $Signals) {
+    $Signals = Get-ZnxBacktestSignals -High $High -Low $Low -Close $Close
+  }
 
   $tradeResults = New-Object System.Collections.Generic.List[double]
+  $tradeDetails = New-Object System.Collections.Generic.List[object]
   $lastExit = 30
   $reward = $TargetAtr / $StopAtr
+  $signalItems = @($Signals.Items)
+  $signalTotal = $signalItems.Count
 
-  for ($i = 31; $i -lt $count - 2; $i++) {
-    if ($null -ne $Progress -and ($i % 100 -eq 0)) {
+  for ($k = 0; $k -lt $signalTotal; $k++) {
+    $signal = $signalItems[$k]
+    $i = [int]$signal.Index
+    if ($null -ne $Progress -and ($k % 25 -eq 0)) {
       $Progress["done"] = $i
       $Progress["trades"] = $tradeResults.Count
     }
     if ($i -le $lastExit) { continue }
 
-    $previousUp = $ema9[$i - 1] -le $ema21[$i - 1]
-    $currentUp = $ema9[$i] -gt $ema21[$i]
-    $previousDown = $ema9[$i - 1] -ge $ema21[$i - 1]
-    $currentDown = $ema9[$i] -lt $ema21[$i]
-    $crossUp = $previousUp -and $currentUp
-    $crossDown = $previousDown -and $currentDown
-    if (-not $crossUp -and -not $crossDown) { continue }
-
-    $atr = [double]$atrSeries[$i]
+    $atr = [double]$signal.Atr
     if ($atr -le 0) { continue }
 
     $entry = [double]$OpenPrices[$i + 1]
-    $isLong = $crossUp
+    $isLong = [bool]$signal.Long
     if ($isLong) {
       $stop = $entry - ($StopAtr * $atr)
       $target = $entry + ($TargetAtr * $atr)
@@ -1367,37 +1818,76 @@ function Invoke-ZnxBacktestCore {
 
     $exitLimit = [Math]::Min($count - 1, $i + $MaxBarsPerTrade)
     $closed = $false
+    $exitBar = $exitLimit
+    $exitPrice = 0.0
+    $reason = "tempo"
+    $result = 0.0
     for ($j = $i + 1; $j -le $exitLimit; $j++) {
       if ($isLong) {
         if ($Low[$j] -le $stop) {
-          $tradeResults.Add(-1.0)
-          $lastExit = $j
+          $result = -1.0
+          $exitBar = $j
+          $exitPrice = $stop
+          $reason = "stop"
           $closed = $true
           break
         }
         if ($High[$j] -ge $target) {
-          $tradeResults.Add($reward)
-          $lastExit = $j
+          $result = $reward
+          $exitBar = $j
+          $exitPrice = $target
+          $reason = "alvo"
           $closed = $true
           break
         }
       }
       else {
         if ($High[$j] -ge $stop) {
-          $tradeResults.Add(-1.0)
-          $lastExit = $j
+          $result = -1.0
+          $exitBar = $j
+          $exitPrice = $stop
+          $reason = "stop"
           $closed = $true
           break
         }
         if ($Low[$j] -le $target) {
-          $tradeResults.Add($reward)
-          $lastExit = $j
+          $result = $reward
+          $exitBar = $j
+          $exitPrice = $target
+          $reason = "alvo"
           $closed = $true
           break
         }
       }
     }
     if (-not $closed) { $lastExit = $exitLimit }
+    else {
+      $tradeResults.Add($result)
+      $lastExit = $exitBar
+      if ($CollectTrades) {
+        $entryTime = $null
+        $exitTime = $null
+        if ($null -ne $Timestamps -and $Timestamps.Length -gt $exitBar) {
+          if ($i + 1 -lt $Timestamps.Length) {
+            $entryTime = [datetimeOffset]::FromUnixTimeSeconds([long]$Timestamps[$i + 1]).UtcDateTime.ToString("o")
+          }
+          $exitTime = [datetimeOffset]::FromUnixTimeSeconds([long]$Timestamps[$exitBar]).UtcDateTime.ToString("o")
+        }
+        $tradeDetails.Add([ordered]@{
+          direction = if ($isLong) { "LONG" } else { "SHORT" }
+          entryBar  = $i + 1
+          entryTime = $entryTime
+          entry     = [Math]::Round($entry, 6)
+          stop      = [Math]::Round($stop, 6)
+          target    = [Math]::Round($target, 6)
+          exitBar   = $exitBar
+          exitTime  = $exitTime
+          exit      = [Math]::Round($exitPrice, 6)
+          resultR   = [Math]::Round($result, 2)
+          reason    = $reason
+        })
+      }
+    }
   }
 
   if ($null -ne $Progress -and $tradeResults.Count -gt 0) {
@@ -1493,6 +1983,10 @@ function Invoke-ZnxBacktestCore {
     stopAtr         = $StopAtr
     targetAtr       = $TargetAtr
     maxBarsPerTrade = $MaxBarsPerTrade
+    # Calculos realmente executados: candles lidos + cada reamostragem x
+    # trades sorteados + as proprias operacoes fechadas.
+    calculations    = $count + ($tradeCount * $Simulations) + $tradeCount
+    tradeDetails    = $(if ($CollectTrades) { @($tradeDetails | Select-Object -Last ([Math]::Max(1, $MaxTradeDetails))) } else { @() })
   }
 }
 
@@ -1523,7 +2017,8 @@ function Invoke-ZnxBacktest {
     -CacheTtlSeconds 600
   $stats = Invoke-ZnxBacktestCore -OpenPrices $candles.Open -High $candles.High `
     -Low $candles.Low -Close $candles.Close -StopAtr $StopAtr -TargetAtr $TargetAtr `
-    -Simulations $Simulations -Seed 42 -Progress $Progress
+    -Simulations $Simulations -Seed 42 -Progress $Progress `
+    -Timestamps $candles.Timestamps -CollectTrades
 
   $payload = [ordered]@{
     symbol     = $Symbol
@@ -1535,6 +2030,227 @@ function Invoke-ZnxBacktest {
     strategy   = "cruzamento EMA 9/21 com stop e alvo por ATR"
     stats      = $stats
   }
+  Set-ZnxCachedValue -Key $cacheKey -Value $payload
+  return $payload
+}
+
+function Invoke-ZnxBacktestSweep {
+  # Compara varias combinacoes de stop/alvo em TODOS os mercados do radar com
+  # os mesmos candles reais. Cada mercado tem seus proprios trades (entrada e
+  # saida registradas) e a agregacao mostra quantas combinacoes deram positivo
+  # e quantas deram negativo. Nada e sorteado para "dar certo".
+  param(
+    [string[]]$Symbols = @(),
+    [double[]]$StopAtrs = @(1.0, 1.5, 2.0),
+    [double[]]$TargetAtrs = @(2.0, 3.0, 4.0),
+    # 120 por combinacao x 72 combinacoes = 8.640 reamostragens reais. O custo
+    # roda em segundo plano e o progresso e publicado em /api/backtest/progress.
+    [int]$Simulations = 120,
+    [int]$MaxSamplesPerMarket = 8,
+    [int]$CacheTtlSeconds = 600,
+    [hashtable]$Progress = $null
+  )
+
+  if ($null -eq $Symbols -or $Symbols.Count -eq 0) { $Symbols = Get-ZnxTrackedSymbols }
+  if ($StopAtrs.Count -eq 0) { $StopAtrs = @(1.0, 1.5, 2.0) }
+  if ($TargetAtrs.Count -eq 0) { $TargetAtrs = @(2.0, 3.0, 4.0) }
+  if ($Simulations -lt 100) { $Simulations = 100 }
+  if ($Simulations -gt 2000) { $Simulations = 2000 }
+
+  $gridKey = "$($StopAtrs -join ',')" + "|" + "$($TargetAtrs -join ',')"
+  $cacheKey = "sweep|$($Symbols -join ',')|$gridKey|$Simulations"
+  $cached = Get-ZnxCachedValue -Key $cacheKey -TtlSeconds $CacheTtlSeconds
+  if ($null -ne $cached) {
+    if ($null -ne $Progress) {
+      $Progress["phase"] = "done"
+      $Progress["done"] = 1
+      $Progress["total"] = 1
+      $Progress["trades"] = [int]$cached.aggregate.entries
+    }
+    return $cached
+  }
+
+  $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+  $combosPerMarket = $StopAtrs.Count * $TargetAtrs.Count
+  $totalRuns = $Symbols.Count * $combosPerMarket
+  $run = 0
+  if ($null -ne $Progress) {
+    $Progress["phase"] = "markets"
+    $Progress["done"] = 0
+    $Progress["total"] = $totalRuns
+    $Progress["trades"] = 0
+  }
+
+  $markets = New-Object System.Collections.Generic.List[object]
+  $aggEntries = 0
+  $aggExits = 0
+  $aggWins = 0
+  $aggLosses = 0
+  $aggGrossWin = 0.0
+  $aggGrossLoss = 0.0
+  $aggR = 0.0
+  $totalCalculations = 0
+  $successfulCombos = 0
+  $failedCombos = 0
+  $fromMs = [long]::MaxValue
+  $toMs = [long]::MinValue
+
+  foreach ($symbol in $Symbols) {
+    $label = Get-ZnxSymbolLabel -Symbol $symbol
+    $candles = $null
+    try {
+      $candles = Get-ZnxMarketCandles -Symbol $symbol -Range "60d" -Interval "5m" `
+        -CacheTtlSeconds 600
+    }
+    catch {
+      Write-Verbose "Sweep sem candles para $symbol`: $($_.Exception.Message)"
+      $run += $combosPerMarket
+      if ($null -ne $Progress) { $Progress["done"] = $run }
+      continue
+    }
+
+    if ([long]$candles.Timestamps[0] -lt $fromMs) { $fromMs = [long]$candles.Timestamps[0] }
+    $lastStamp = [long]$candles.Timestamps[$candles.Timestamps.Length - 1]
+    if ($lastStamp -gt $toMs) { $toMs = $lastStamp }
+
+    $signals = Get-ZnxBacktestSignals -High $candles.High -Low $candles.Low -Close $candles.Close
+    $combos = New-Object System.Collections.Generic.List[object]
+    $bestStats = $null
+    $bestStop = 0.0
+    $bestTarget = 0.0
+    $bestEligible = $false
+
+    foreach ($stopAtr in $StopAtrs) {
+      foreach ($targetAtr in $TargetAtrs) {
+        $stats = Invoke-ZnxBacktestCore -OpenPrices $candles.Open -High $candles.High `
+          -Low $candles.Low -Close $candles.Close -StopAtr $stopAtr -TargetAtr $targetAtr `
+          -Simulations $Simulations -Seed 42 -Signals $signals -CollectTrades `
+          -MaxTradeDetails 0 -Timestamps $candles.Timestamps
+        $totalCalculations += [int]$stats.calculations
+        $run += 1
+        if ($null -ne $Progress) {
+          $Progress["done"] = $run
+          $Progress["trades"] = $aggEntries + $stats.trades
+        }
+
+        $combos.Add([ordered]@{
+          stopAtr     = $stopAtr
+          targetAtr   = $targetAtr
+          trades      = [int]$stats.trades
+          winRate     = [double]$stats.winRate
+          avgR        = [double]$stats.avgR
+          profitFactor = [double]$stats.profitFactor
+        })
+
+        if ([int]$stats.trades -gt 0) {
+          if ([double]$stats.avgR -gt 0) { $successfulCombos++ } else { $failedCombos++ }
+          $eligible = [int]$stats.trades -ge 5
+          if ($null -eq $bestStats -or ($eligible -and -not $bestEligible) -or
+              ($eligible -eq $bestEligible -and [double]$stats.avgR -gt [double]$bestStats.avgR)) {
+            $bestStats = $stats
+            $bestStop = $stopAtr
+            $bestTarget = $targetAtr
+            $bestEligible = $eligible
+          }
+        }
+      }
+    }
+
+    if ($null -eq $bestStats) {
+      $markets.Add([ordered]@{
+        symbol = $symbol; label = $label; candles = [int]$candles.Close.Length
+        trades = 0; wins = 0; losses = 0; winRate = 0.0; avgR = 0.0
+        profitFactor = 0.0; bestStopAtr = 0.0; bestTargetAtr = 0.0
+        calculations = 0; combos = @($combos.ToArray()); samples = @()
+      })
+      continue
+    }
+
+    # Melhor combinacao do mercado: refaz a coleta de detalhes so para ela,
+    # para trazer amostras reais de entrada e saida sem carregar 9 listas.
+    $samples = @()
+    try {
+      $sampleStats = Invoke-ZnxBacktestCore -OpenPrices $candles.Open -High $candles.High `
+        -Low $candles.Low -Close $candles.Close -StopAtr $bestStop -TargetAtr $bestTarget `
+        -Simulations 100 -Seed 42 -Signals $signals -CollectTrades `
+        -MaxTradeDetails $MaxSamplesPerMarket -Timestamps $candles.Timestamps
+      $samples = @($sampleStats.tradeDetails)
+    }
+    catch { $samples = @() }
+
+    $markets.Add([ordered]@{
+      symbol       = $symbol
+      label        = $label
+      candles      = [int]$bestStats.candles
+      trades       = [int]$bestStats.trades
+      wins         = [int]$bestStats.wins
+      losses       = [int]$bestStats.losses
+      winRate      = [double]$bestStats.winRate
+      avgR         = [double]$bestStats.avgR
+      profitFactor = [double]$bestStats.profitFactor
+      bestStopAtr  = $bestStop
+      bestTargetAtr = $bestTarget
+      calculations = [int]$bestStats.calculations
+      combos       = @($combos.ToArray())
+      samples      = $samples
+    })
+
+    $aggEntries += [int]$bestStats.trades
+    $aggExits += [int]$bestStats.trades
+    $aggWins += [int]$bestStats.wins
+    $aggLosses += [int]$bestStats.losses
+    $aggR += ([double]$bestStats.avgR * [int]$bestStats.trades)
+    foreach ($combo in $combos) {
+      if ([int]$combo.trades -le 0) { continue }
+      $totalReturn = [double]$combo.avgR * [int]$combo.trades
+      if ($totalReturn -ge 0) { $aggGrossWin += $totalReturn } else { $aggGrossLoss += [Math]::Abs($totalReturn) }
+    }
+  }
+
+  if ($markets.Count -eq 0) {
+    throw "O comparativo nao conseguiu candles de nenhum mercado agora."
+  }
+
+  $stopwatch.Stop()
+  $sortedMarkets = @($markets | Sort-Object { [double]$_.avgR } -Descending)
+  $profitFactor = 0.0
+  if ($aggGrossLoss -gt 0) { $profitFactor = $aggGrossWin / $aggGrossLoss }
+  $aggregate = [ordered]@{
+    markets          = $sortedMarkets.Count
+    combos           = $sortedMarkets.Count * $combosPerMarket
+    simulationsPerCombo = $Simulations
+    simulations      = $sortedMarkets.Count * $combosPerMarket * $Simulations
+    entries          = $aggEntries
+    exits            = $aggExits
+    wins             = $aggWins
+    losses           = $aggLosses
+    winRate          = $(if ($aggEntries -gt 0) { [Math]::Round(($aggWins / [double]$aggEntries) * 100.0, 1) } else { 0.0 })
+    avgR             = $(if ($aggEntries -gt 0) { [Math]::Round($aggR / [double]$aggEntries, 2) } else { 0.0 })
+    profitFactor     = [Math]::Round($profitFactor, 2)
+    successfulCombos = $successfulCombos
+    failedCombos     = $failedCombos
+    calculations     = $totalCalculations
+    elapsedMs        = [int]$stopwatch.ElapsedMilliseconds
+  }
+
+  $payload = [ordered]@{
+    mode       = "sweep"
+    at         = [datetime]::UtcNow.ToString("o")
+    strategy   = "cruzamento EMA 9/21 com stop e alvo por ATR, em 8 mercados"
+    timeframe  = "5m"
+    from       = $(if ($fromMs -lt [long]::MaxValue) { [datetimeOffset]::FromUnixTimeSeconds($fromMs).UtcDateTime.ToString("o") } else { $null })
+    to         = $(if ($toMs -gt [long]::MinValue) { [datetimeOffset]::FromUnixTimeSeconds($toMs).UtcDateTime.ToString("o") } else { $null })
+    grid       = [ordered]@{ stopAtrs = $StopAtrs; targetAtrs = $TargetAtrs }
+    aggregate  = $aggregate
+    markets    = $sortedMarkets
+  }
+
+  if ($null -ne $Progress) {
+    $Progress["done"] = $totalRuns
+    $Progress["phase"] = "done"
+    $Progress["trades"] = $aggEntries
+  }
+
   Set-ZnxCachedValue -Key $cacheKey -Value $payload
   return $payload
 }
@@ -1652,7 +2368,7 @@ function Get-ZnxPositionPlan {
 # =====================================================================
 # CONSISTENCIA ENTRE CONFIDENCE E DESFECHO
 # ---------------------------------------------------------------------
-# O confidence do contrato V8.0 mede forca, clareza e consistencia das
+# O confidence do contrato V8.1 mede forca, clareza e consistencia das
 # evidencias tecnicas; NAO e probabilidade de acerto. Esta funcao mede
 # apenas a discrepancia numerica entre esse indice e o desfecho real:
 #   p = confidence/100, o = 1 (favorable) / 0 (adverse), erro = (p - o)^2
@@ -1809,13 +2525,19 @@ Export-ModuleMember -Function @(
   "Get-ZnxMarketSnapshot",
   "Get-ZnxTradingViewQuotes",
   "Get-ZnxChartSeries",
+  "Get-ZnxRecentNewsItems",
   "Get-ZnxMarketNews",
   "Get-ZnxScanner",
   "Invoke-ZnxBacktest",
   "Invoke-ZnxBacktestCore",
+  "Invoke-ZnxBacktestSweep",
+  "Get-ZnxBacktestSignals",
   "Get-ZnxTradePlan",
   "Get-ZnxPositionPlan",
   "Get-ZnxSetupScore",
+  "Get-ZnxSetupConfidence",
+  "Get-ZnxBreakoutFreshness",
+  "Get-ZnxScanIndicators",
   "Get-ZnxEmaSeries",
   "Get-ZnxRsiSeries",
   "Get-ZnxAtrSeries",

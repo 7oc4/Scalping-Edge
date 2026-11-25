@@ -75,8 +75,8 @@ function New-ValidAnalysisObject {
             invalidation          = @("Perda do suporte em 1.0985")
         }
         conflict_notes = @()
-        risk = @("Volatilidade media pode gerar ruido")
-        summary = "Leitura geral:`nImagem classe A, direcao BUY.`n`nprice action:`nPullback para EMA20.`n`nniveis e zonas:`nSuporte em 1.0985.`n`nIndicadores e Volumes:`nEMA20 abaixo do preco.`n`nCenario e invalidacao:`nEntrada no fechamento.`n`nLimitacoes:`nVolatilidade media."
+        risk = @()
+        summary = "Leitura geral:`nImagem classe A, direcao BUY.`n`nprice action:`nPullback para EMA20.`n`nniveis e zonas:`nSuporte em 1.0985.`n`nIndicadores e Volumes:`nEMA20 abaixo do preco.`n`nCenario e invalidacao:`nEntrada no fechamento.`n`nLimitacoes:`nNenhuma limitacao especifica identificada."
     }
 }
 
@@ -860,12 +860,11 @@ Describe "13. Travas de evidencia e coerencia" {
         $result.direction | Should Be "BUY"
     }
 
-    It "13.4 imagem legivel sem limitacoes recebe limitacao visual derivada" {
+    It "13.4 imagem legivel sem limitacao especifica mantem risk vazio" {
         $obj = New-ValidAnalysisObject
         $obj.risk = @()
         $result = ConvertTo-ValidatedAnalysisResult -Result $obj
-        $result.risk.Count | Should BeGreaterThan 0
-        ($result.risk -join " ") | Should Match "recorte visivel"
+        $result.risk.Count | Should Be 0
         $result.summary | Should Match "Limitacoes:"
         $result.direction | Should Be "BUY"
     }
@@ -896,11 +895,11 @@ Describe "13. Travas de evidencia e coerencia" {
         $result.direction | Should Be "BUY"
     }
 
-    It "13.7 resumo curto fica registrado nas limitacoes" {
+    It "13.7 resumo curto e valido sem gerar limitacao artificial" {
         $obj = New-ValidAnalysisObject
         $obj.summary = "Leitura geral: A. price action: B. niveis e zonas: C. Indicadores e Volumes: D. Cenario e invalidacao: E. Limitacoes: F."
         $result = ConvertTo-ValidatedAnalysisResult -Result $obj
-        ($result.risk -join " ") | Should Match "abaixo do piso de 160"
+        $result.risk.Count | Should Be 0
     }
 
     It "13.8 rebaixamento nao injeta jargao interno no selected_reason" {

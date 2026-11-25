@@ -1,5 +1,5 @@
 ﻿# Versao do contrato. Deve acompanhar o nome do arquivo em prompts\.
-$script:ContractVersion = "8.0"
+$script:ContractVersion = "8.1"
 
 # System.Drawing esta disponivel no Windows PowerShell 5.1. Se o modulo for
 # importado em um host sem GDI+, o pre-processamento simplesmente nao age.
@@ -9,6 +9,11 @@ try {
   $script:DrawingAvailable = $true
 }
 catch { }
+
+# System.Net.Http precisa existir antes da resolucao do parametro tipado de
+# Invoke-OpenAIChatCompletion. O server.ps1 ja carrega, mas o modulo tambem e
+# importado direto por testes e ferramentas.
+try { Add-Type -AssemblyName System.Net.Http -ErrorAction Stop } catch { }
 
 # Fonte unica da lista de campos do topo do JSON de analise.
 $script:ContractFields = @(
@@ -646,10 +651,8 @@ function ConvertTo-ValidatedAnalysisResult {
       }
     }
 
-    # Trava de limitacoes: imagem legivel precisa chegar ao painel com ao menos
-    # uma limitacao registrada. Quando a IA devolve risk vazio, o servidor
-    # registra a limitacao visual concreta da captura em vez de descartar a
-    # analise inteira.
+    # Quando risk vem vazio, derive apenas limitacoes objetivas de campos
+    # visuais ausentes; sem uma limitacao observavel, mantenha a lista vazia.
     $usableRisks = @($Result.risk | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
     if ($usableRisks.Count -eq 0) {
       $derivedLimitations = @()
@@ -670,9 +673,6 @@ function ConvertTo-ValidatedAnalysisResult {
       }
       if (@($Result.indicators | Where-Object { $_.visible }).Count -eq 0) {
         $derivedLimitations += "Nenhum painel de indicador esta visivel; momentum e exaustao nao foram avaliados."
-      }
-      if ($derivedLimitations.Count -eq 0) {
-        $derivedLimitations += "A leitura vale apenas para o recorte visivel da captura; o que ocorre fora dele nao pode ser verificado."
       }
       $Result.risk = @($derivedLimitations | Select-Object -First 3)
     }
@@ -878,16 +878,6 @@ function ConvertTo-ValidatedAnalysisResult {
     }
     if (-not $sectionsAreValid) {
       $Result.summary = New-ValidatedAnalysisSummary -Result $Result -ModelSummary $Result.summary
-    }
-  }
-  # Piso de detalhe: resumo curto em A/B e marcado nas limitacoes em vez de ser
-  # reescrito, para nao perder o texto aprovado pela validacao de secoes.
-  if ($Result.image_class -in @("A", "B")) {
-    $summaryWordCount = @([regex]::Matches([string]$Result.summary, "\S+")).Count
-    if ($summaryWordCount -lt 160) {
-      $Result.risk = @($Result.risk) + (
-        "Resumo com $summaryWordCount palavras: abaixo do piso de 160 palavras para imagens legiveis. O detalhe esta nos campos estruturados."
-      )
     }
   }
   return $Result
@@ -1406,6 +1396,277 @@ function Test-AnalysisRateLimit {
   return [pscustomobject]@{ Allowed = $true; Timestamps = $updated; RetryAfterSeconds = 0 }
 }
 
+# =====================================================================
+# COMPATIBILIDADE DE MODELOS OPENAI
+# ---------------------------------------------------------------------
+# Os modelos de raciocinio da familia GPT-5/6 e o-series usam
+# max_completion_tokens e recusam temperature/top_p/penalidades. Os modelos
+# anteriores (gpt-4o-mini, gpt-4.1) aceitam temperature e max_tokens. O perfil
+# abaixo e derivado do id do modelo, sem supor que ele existe na conta: a
+# disponibilidade real continua sendo checada em GET /v1/models/<id>.
+# =====================================================================
+$script:OpenAIReasoningEfforts = @("none", "low", "medium", "high", "xhigh", "max")
+$script:OpenAIReasoningEffortDefault = "low"
+
+function Test-OpenAIReasoningModel {
+  param([AllowEmptyString()][string]$Model)
+  $id = ([string]$Model).Trim().ToLowerInvariant()
+  if (-not $id) { return $false }
+  # gpt-5, gpt-5.6-luna, gpt-6-astra, o1/o3/o4-mini...
+  if ($id -match '^gpt-[5-9](\.|-|$)') { return $true }
+  if ($id -match '^o[1-9](\.|-|$)') { return $true }
+  return $false
+}
+
+function Get-OpenAIReasoningEfforts {
+  return @($script:OpenAIReasoningEfforts)
+}
+
+function Get-OpenAIModelProfile {
+  param(
+    [Parameter(Mandatory = $true)][string]$Model,
+    [int]$OutputTokens = 4000,
+    [AllowEmptyString()][string]$ReasoningEffort = ""
+  )
+  $id = ([string]$Model).Trim()
+  if (-not $id) { throw "Informe o modelo OpenAI (ex.: gpt-5.6-luna)." }
+  $maxOutput = [Math]::Max(256, [Math]::Min(128000, $OutputTokens))
+  if (Test-OpenAIReasoningModel -Model $id) {
+    $requested = ([string]$ReasoningEffort).Trim().ToLowerInvariant()
+    $effort = $requested
+    $valid = $true
+    if (-not $effort) { $effort = $script:OpenAIReasoningEffortDefault; $valid = $true }
+    elseif ($effort -notin $script:OpenAIReasoningEfforts) {
+      $effort = $script:OpenAIReasoningEffortDefault
+      $valid = $false
+    }
+    return [ordered]@{
+      model                     = $id
+      family                    = "reasoning"
+      tokenParameter            = "max_completion_tokens"
+      maxOutputTokens           = $maxOutput
+      temperature               = $null
+      supportsTemperature       = $false
+      reasoningEffort           = $effort
+      reasoningEffortRequested  = $requested
+      reasoningEffortValid      = $valid
+      supportsStructuredOutputs = $true
+    }
+  }
+  return [ordered]@{
+    model                     = $id
+    family                    = "classic"
+    tokenParameter            = "max_tokens"
+    maxOutputTokens           = $maxOutput
+    temperature               = 0.0
+    supportsTemperature       = $true
+    reasoningEffort           = $null
+    reasoningEffortRequested  = ""
+    reasoningEffortValid      = $true
+    supportsStructuredOutputs = $true
+  }
+}
+
+function New-OpenAIChatRequestBody {
+  # Monta o corpo de /v1/chat/completions de acordo com o perfil do modelo:
+  # sem temperature e com max_completion_tokens em modelos de raciocinio,
+  # mantendo temperature 0.0 + max_tokens nos modelos anteriores. O schema
+  # estrito do contrato e o mesmo nos dois casos.
+  param(
+    [Parameter(Mandatory = $true)][string]$Model,
+    [Parameter(Mandatory = $true)][string]$SystemPrompt,
+    [Parameter(Mandatory = $true)][AllowEmptyString()][string]$UserPrompt,
+    [Parameter(Mandatory = $true)][string]$MimeType,
+    [Parameter(Mandatory = $true)][string]$ImageData,
+    [string]$ImageDetail = "high",
+    [int]$OutputTokens = 4000,
+    [AllowEmptyString()][string]$ReasoningEffort = ""
+  )
+  $profile = Get-OpenAIModelProfile -Model $Model -OutputTokens $OutputTokens `
+    -ReasoningEffort $ReasoningEffort
+  $body = [ordered]@{
+    model = $profile.model
+    store = $false
+  }
+  if ($profile.supportsTemperature) { $body["temperature"] = [double]$profile.temperature }
+  $body[$profile.tokenParameter] = [int]$profile.maxOutputTokens
+  if ($profile.reasoningEffort) { $body["reasoning_effort"] = [string]$profile.reasoningEffort }
+  $body["response_format"] = [ordered]@{
+    type        = "json_schema"
+    json_schema = [ordered]@{
+      name   = "chart_analysis"
+      strict = $true
+      schema = (New-AnalysisResponseSchema)
+    }
+  }
+  $body["messages"] = @(
+    [ordered]@{ role = "system"; content = $SystemPrompt },
+    [ordered]@{
+      role    = "user"
+      content = @(
+        [ordered]@{ type = "text"; text = $UserPrompt },
+        [ordered]@{
+          type      = "image_url"
+          image_url = [ordered]@{ url = "data:$MimeType;base64,$ImageData"; detail = $ImageDetail }
+        }
+      )
+    }
+  )
+  return [pscustomobject]@{ Profile = $profile; Body = $body }
+}
+
+function Set-OpenAIChatRequestBodyTokenLimit {
+  # A repeticao por resposta cortada precisa gravar no nome de parametro certo
+  # (max_tokens ou max_completion_tokens). Devolve o limite aplicado.
+  param(
+    [Parameter(Mandatory = $true)]$Body,
+    [Parameter(Mandatory = $true)]$Profile,
+    [Parameter(Mandatory = $true)][int]$Limit
+  )
+  $applied = [Math]::Max(256, [Math]::Min(128000, $Limit))
+  $Body[[string]$Profile.tokenParameter] = $applied
+  return $applied
+}
+
+function Test-OpenAIModelMissingError {
+  # Detecta somente "modelo inexistente/sem acesso". Um 400 de imagem ou de
+  # parametro nao pode disparar troca de modelo: isso esconderia erro real.
+  param(
+    [int]$StatusCode,
+    [AllowEmptyString()][string]$Body = ""
+  )
+  if ($StatusCode -eq 404) { return $true }
+  if ($StatusCode -ne 400) { return $false }
+  if ([string]::IsNullOrWhiteSpace($Body)) { return $false }
+  return [bool]($Body -match '(?i)model_not_found|does not exist|not have access|no access to model')
+}
+
+function Hide-SensitiveDiagnostic {
+  # Nenhuma mensagem de erro pode carregar a chave. O diagnostic vem do corpo
+  # do provedor ou da excecao local; aqui ele e limpo antes de ir para o log,
+  # para a resposta HTTP ou para a tela do usuario.
+  param(
+    [AllowEmptyString()][AllowNull()][string]$Text,
+    [AllowEmptyString()][string]$ApiKey = ""
+  )
+  if ([string]::IsNullOrEmpty($Text)) { return "" }
+  $clean = $Text
+  if ($ApiKey) { $clean = $clean -replace [regex]::Escape($ApiKey), "[chave oculta]" }
+  $clean = $clean -replace '(?i)Bearer\s+\S+', 'Bearer [oculto]'
+  $clean = $clean -replace '(?i)\bsk-[A-Za-z0-9_\-]{8,}', '[chave oculta]'
+  return $clean
+}
+
+function Invoke-OpenAIChatCompletion {
+  # Chamada HTTP + retry de 429/5xx. A resposta volta como hashtable
+  # (Success/StatusCode/Body/ElapsedMs/Attempts/Error) e nunca inclui a chave.
+  # -Transport permite testar 400/401/429/500/503/timeout sem rede e sem
+  # creditos: o scriptblock recebe (JsonBody, tentativa) e devolve StatusCode
+  # e Body, ou lanca excecao para simular falha de transporte.
+  param(
+    [Parameter(Mandatory = $true)][string]$JsonBody,
+    [string]$Endpoint = "https://api.openai.com/v1/chat/completions",
+    [AllowEmptyString()][string]$ApiKey = "",
+    [int]$TimeoutSeconds = 180,
+    [int]$MaxRetries = 1,
+    [System.Net.Http.HttpClient]$Client = $null,
+    [scriptblock]$Transport = $null,
+    [int]$RetryBackoffBaseMs = 2000
+  )
+  $attempt       = 0
+  $lastStatus    = 0
+  $lastBody      = ""
+  $lastException = $null
+  $totalMs       = 0
+  $ownsClient    = $false
+  $httpClient    = $Client
+
+  if (-not $Transport -and -not $httpClient) {
+    $httpClient = [System.Net.Http.HttpClient]::new()
+    $ownsClient = $true
+  }
+  # HttpClient.Timeout so pode ser atribuido antes da primeira requisicao. O
+  # cliente injetado e reutilizado pelo servidor (que ja o cria com o timeout
+  # configurado); sobrescrever aqui quebraria a segunda chamada.
+  if ($httpClient -and $ownsClient) {
+    $httpClient.Timeout = [TimeSpan]::FromSeconds([Math]::Max(1, $TimeoutSeconds))
+  }
+
+  try {
+    while ($attempt -le $MaxRetries) {
+      $attempt++
+      $sw = [System.Diagnostics.Stopwatch]::StartNew()
+      try {
+        if ($Transport) {
+          $mocked = & $Transport $JsonBody $attempt
+          $lastStatus = [int]$mocked.StatusCode
+          $lastBody   = [string]$mocked.Body
+        }
+        else {
+          $req = $null
+          $resp = $null
+          try {
+            $req = [System.Net.Http.HttpRequestMessage]::new(
+              [System.Net.Http.HttpMethod]::Post, $Endpoint)
+            $req.Headers.Authorization =
+              [System.Net.Http.Headers.AuthenticationHeaderValue]::new("Bearer", $ApiKey)
+            $req.Content = [System.Net.Http.StringContent]::new(
+              $JsonBody, [System.Text.Encoding]::UTF8, "application/json")
+            $resp = $httpClient.SendAsync($req).GetAwaiter().GetResult()
+            $lastStatus = [int]$resp.StatusCode
+            $respBytes  = $resp.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult()
+            $lastBody   = [System.Text.Encoding]::UTF8.GetString($respBytes)
+          }
+          finally {
+            if ($resp) { $resp.Dispose() }
+            if ($req)  { $req.Dispose() }
+          }
+        }
+        $sw.Stop()
+        $totalMs += $sw.ElapsedMilliseconds
+
+        if ($lastStatus -ge 200 -and $lastStatus -lt 300) {
+          return @{
+            Success = $true; StatusCode = $lastStatus; Body = $lastBody
+            ElapsedMs = $totalMs; Attempts = $attempt
+          }
+        }
+        if ($lastStatus -ne 429 -and $lastStatus -lt 500) {
+          return @{
+            Success = $false; StatusCode = $lastStatus; Body = $lastBody
+            ElapsedMs = $totalMs; Attempts = $attempt
+          }
+        }
+      }
+      catch {
+        $sw.Stop()
+        $totalMs += $sw.ElapsedMilliseconds
+        $lastException = Hide-SensitiveDiagnostic -Text $_.Exception.Message -ApiKey $ApiKey
+        $lastStatus    = 0
+        $lastBody      = $lastException
+      }
+
+      if ($attempt -le $MaxRetries) {
+        $backoffMs = [int]([Math]::Pow(2, $attempt - 1) * $RetryBackoffBaseMs)
+        Write-Warning "OpenAI indisponivel (tentativa $attempt/$($MaxRetries + 1)). Retentando em $([Math]::Round($backoffMs / 1000, 1))s..."
+        if ($backoffMs -gt 0) { Start-Sleep -Milliseconds $backoffMs }
+      }
+    }
+
+    return @{
+      Success    = $false
+      StatusCode = $lastStatus
+      Body       = $lastBody
+      ElapsedMs  = $totalMs
+      Attempts   = $attempt
+      Error      = $lastException
+    }
+  }
+  finally {
+    if ($ownsClient -and $httpClient) { $httpClient.Dispose() }
+  }
+}
+
 Export-ModuleMember -Function `
   New-AnalysisResponseSchema, `
   New-AnalysisStringArraySchema, `
@@ -1423,4 +1684,12 @@ Export-ModuleMember -Function `
   Get-AnalysisContractFields, `
   Get-AnalysisContractVersion, `
   Get-AnalysisFailureMessage, `
-  Remove-ModelReasoningBlock
+  Remove-ModelReasoningBlock,
+  Test-OpenAIReasoningModel,
+  Get-OpenAIReasoningEfforts,
+  Get-OpenAIModelProfile,
+  New-OpenAIChatRequestBody,
+  Set-OpenAIChatRequestBodyTokenLimit,
+  Test-OpenAIModelMissingError,
+  Hide-SensitiveDiagnostic,
+  Invoke-OpenAIChatCompletion

@@ -111,7 +111,32 @@
     return "";
   }
 
+  function isWithinNewsWindow(item, now = Date.now()) {
+    const publishedAt = Date.parse(item.publishedAt);
+    const age = now - publishedAt;
+    return Number.isFinite(publishedAt) && age >= 0 && age <= 24 * 60 * 60 * 1000;
+  }
+
+  function pruneExpiredItems() {
+    const current = items.filter((item) => isWithinNewsWindow(item));
+    if (current.length === items.length) {
+      return;
+    }
+    items = current;
+    total = Math.min(total, items.length);
+    sources = Array.from(new Set(items.map((item) => item.source).filter(Boolean)));
+    if (activeTag !== "Todas" && !items.some((item) => (item.tags || []).includes(activeTag))) {
+      activeTag = "Todas";
+    }
+    renderFilters();
+    renderStats();
+    renderList();
+  }
+
   function matches(item) {
+    if (!isWithinNewsWindow(item)) {
+      return false;
+    }
     if (activeTag !== "Todas" && !(item.tags || []).includes(activeTag)) {
       return false;
     }
@@ -297,10 +322,17 @@
       renderList();
 
       const failed = Number(payload.failedFeeds) || 0;
-      setStatus(
-        `${items.length} manchetes carregadas${failed ? ` · ${failed} feed(s) fora do ar agora` : ""}.`,
-        "ok",
-      );
+      if (items.length === 0) {
+        setStatus(
+          `Nenhuma manchete com data verificável nas últimas 24 horas${failed ? ` · ${failed} feed(s) fora do ar` : ""}.`,
+          failed ? "error" : "ok",
+        );
+      } else {
+        setStatus(
+          `${items.length} manchetes carregadas${failed ? ` · ${failed} feed(s) fora do ar agora` : ""}.`,
+          failed ? "error" : "ok",
+        );
+      }
     } catch (error) {
       // A lista anterior continua na tela com o horario dela: nao existe
       // manchete nova nem "atualizada agora" quando a fonte falha.
@@ -340,6 +372,7 @@
 
   window.setInterval(() => loadNews(true), REFRESH_MS);
   window.setInterval(() => {
+    pruneExpiredItems();
     renderCountdown();
     renderFoot();
   }, 1000);

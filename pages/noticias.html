@@ -8,12 +8,13 @@
     <meta name="theme-color" content="#080b0f" />
     <title>Scalping Edge — Notícias de mercado</title>
     <link rel="stylesheet" href="../assets/css/style.css" />
+    <link rel="stylesheet" href="../assets/build/react-islands.css" />
     <script src="../assets/js/pages.js" defer></script>
     <script src="../assets/js/news.js" defer></script>
   </head>
   <body>
     <div class="startup-loader" id="startup-loader" role="status" aria-live="polite">
-      <span class="startup-loader-ring" aria-hidden="true"></span>
+      <span id="splash-loader-root" aria-hidden="true"></span>
       <span class="startup-loader-brand">SCALPING <strong>EDGE</strong></span>
       <span class="startup-loader-caption">Preparando painel</span>
     </div>
@@ -54,6 +55,7 @@
 
       <main class="main-content" id="noticias">
         <header class="topbar">
+          <div id="market-ticker-root" class="min-w-0 flex-1"></div>
           <button
             class="fullscreen-toggle"
             id="fullscreen-toggle"
@@ -79,10 +81,10 @@
             <div class="history-heading">
               <div>
                 <p class="eyebrow">FLUXO DE NOTÍCIAS</p>
-                <h2 id="news-page-title">Notícias de economia e mercado</h2>
+                <h2 id="news-page-title">Notícias de trading e mercados — últimas 24 horas</h2>
                 <p class="history-description">
-                  Manchetes em português de veículos brasileiros e internacionais, verificadas automaticamente a cada minuto.
-                  O horário da última leitura real aparece nos indicadores acima.
+                  Busca em fontes públicas, sem IA, sobre Bitcoin e cripto, forex, bolsa americana e mercados.
+                  Só aparecem notícias com horário de publicação verificável nas últimas 24 horas; a busca atualiza a cada minuto.
                 </p>
               </div>
               <button class="clear-history-button" id="news-refresh" type="button">Atualizar agora</button>
@@ -106,12 +108,14 @@
           </section>
 
           <footer class="page-footer">
-            <strong class="page-footer-brand">Criado por Operadores para Operadores.</strong>
+            <strong class="page-footer-brand">SCALPING EDGE</strong>
            
-            <span class="page-footer-note">Conteúdo educativo com base em leitura visual — não constitui recomendação financeira nem garantia de resultado.</span>
+            <span class="page-footer-note">Ferramenta educativa. Não é recomendação financeira nem garantia de resultado.</span>
           </footer>
         </div>
       </main>
     </div>
+    <div id="react-toast-root"></div>
+    <script type="module" src="../assets/build/react-islands.js"></script>
   </body>
 </html>

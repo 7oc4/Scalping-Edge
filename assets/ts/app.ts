@@ -7,8 +7,23 @@ const HISTORY_DB_NAME = "chartly-local-history";
 const HISTORY_STORE_NAME = "analyses";
 const { normalizeAnalysisPayload, getAnalysisPresentation } = window.AnalysisFormat;
 
+function requiredElement<T extends Element = HTMLElement>(
+  root: ParentNode,
+  selector: string,
+): T {
+  const element = root.querySelector<T>(selector);
+  if (!element) {
+    throw new Error(`Elemento obrigatório não encontrado: ${selector}`);
+  }
+  return element;
+}
+
 function $<T extends Element = HTMLElement>(selector: string): T {
-  return document.querySelector(selector) as T;
+  return requiredElement(document, selector);
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "Ocorreu um erro inesperado.";
 }
 
 interface AnalysisContext {
@@ -50,7 +65,7 @@ interface HistoryEntry {
 const startupLoader = $("#startup-loader");
 window.setTimeout(() => {
   startupLoader.hidden = true;
-}, 700);
+}, 6500);
 
 const imageInput = $<HTMLInputElement>("#image-input");
 const dropZone = $<HTMLButtonElement>("#drop-zone");
@@ -95,27 +110,22 @@ const fullscreenToggle = $<HTMLButtonElement>("#fullscreen-toggle");
 const fullscreenStatus = $("#fullscreen-status");
 const analysisProgress = $("#analysis-progress");
 const navList = $<HTMLElement>(".navigation");
-const historyList = $("#history-list");
-const historyEmpty = $("#history-empty");
-const historyStatus = $("#history-status");
+const historyList = document.querySelector<HTMLDivElement>("#history-list");
+const historyEmpty = document.querySelector<HTMLDivElement>("#history-empty");
+const historyStatus = document.querySelector<HTMLParagraphElement>("#history-status");
 const historyCount = $("#history-count");
-const clearHistoryButton = $<HTMLButtonElement>("#clear-history");
+const clearHistoryButton = document.querySelector<HTMLButtonElement>("#clear-history");
 const analysisOverlay = $("#analysis-overlay");
-const overlayStep = $("#overlay-step");
 const overlayElapsed = $("#overlay-elapsed");
-const overlayProgressBar = $("#overlay-progress-bar");
-const overlayCards = Array.from(document.querySelectorAll<HTMLElement>("#overlay-steps li"));
 
 let previewUrl: string | null = null;
 let selectedFile: File | null = null;
 let currentAnalysisId: string | null = null;
 let historyDatabasePromise: Promise<IDBDatabase> | null = null;
 let historyObjectUrls: string[] = [];
-let loadingTimer: number | null = null;
 let overlayStartedAt = 0;
 let overlayTicker: number | null = null;
 let overlayCloseTimer: number | null = null;
-let overlayStepTimers: number[] = [];
 let levelMarksVisible = true;
 let analysisDiagnostics = { preprocess: "", reread: "" };
 let calibrationBuckets: CalibrationBucket[] = [];
@@ -134,26 +144,6 @@ interface CalibrationBucket {
   bias: number | null;
 }
 
-const OVERLAY_STEPS = [
-  "Preparando e otimizando a imagem…",
-  "Enviando o print e lendo a estrutura do gráfico…",
-  "Interpretando tendência, price action e níveis…",
-  "Conferindo o contrato e as travas de segurança…",
-];
-const OVERLAY_STEP_DELAYS = [0, 5000, 12000, 20000];
-const OVERLAY_PROGRESS = ["10%", "38%", "66%", "90%"];
-
-function setOverlayStep(index: number) {
-  const safeIndex = Math.min(index, OVERLAY_STEPS.length - 1);
-  overlayStep.textContent = OVERLAY_STEPS[safeIndex];
-  analysisProgress.textContent = OVERLAY_STEPS[safeIndex];
-  overlayProgressBar.style.width = OVERLAY_PROGRESS[safeIndex];
-  overlayCards.forEach((card, cardIndex) => {
-    card.classList.toggle("is-done", cardIndex < safeIndex);
-    card.classList.toggle("is-current", cardIndex === safeIndex);
-  });
-}
-
 function openAnalysisOverlay() {
   if (overlayCloseTimer) {
     clearTimeout(overlayCloseTimer);
@@ -164,9 +154,6 @@ function openAnalysisOverlay() {
   analysisOverlay.hidden = false;
   document.body.classList.add("overlay-active");
   requestAnimationFrame(() => analysisOverlay.classList.add("is-visible"));
-  setOverlayStep(0);
-  overlayStepTimers = OVERLAY_STEP_DELAYS.slice(1).map((delay, index) =>
-    window.setTimeout(() => setOverlayStep(index + 1), delay));
   overlayTicker = window.setInterval(() => {
     const elapsed = Math.max(1, Math.round((Date.now() - overlayStartedAt) / 1000));
     overlayElapsed.textContent = `${elapsed}s`;
@@ -174,19 +161,10 @@ function openAnalysisOverlay() {
 }
 
 function closeAnalysisOverlay() {
-  for (const timer of overlayStepTimers) {
-    clearTimeout(timer);
-  }
-  overlayStepTimers = [];
   if (overlayTicker) {
     clearInterval(overlayTicker);
     overlayTicker = null;
   }
-  overlayCards.forEach((card) => {
-    card.classList.add("is-done");
-    card.classList.remove("is-current");
-  });
-  overlayProgressBar.style.width = "100%";
   analysisOverlay.classList.remove("is-visible");
   overlayCloseTimer = window.setTimeout(() => {
     analysisOverlay.hidden = true;
@@ -210,7 +188,7 @@ function updateFullscreenControl() {
   fullscreenToggle.setAttribute("aria-label", label);
   fullscreenToggle.setAttribute("title", label);
   fullscreenToggle.setAttribute("aria-pressed", String(isFullscreen));
-  fullscreenToggle.querySelector("span").textContent = isFullscreen
+  requiredElement(fullscreenToggle, "span").textContent = isFullscreen
     ? "Sair da tela cheia"
     : "Tela cheia";
 }
@@ -230,7 +208,7 @@ fullscreenToggle.addEventListener("click", async () => {
 
     await document.documentElement.requestFullscreen();
   } catch (error) {
-    fullscreenStatus.textContent = `Não foi possível alternar para tela cheia: ${error.message}`;
+    fullscreenStatus.textContent = `Não foi possível alternar para tela cheia: ${errorMessage(error)}`;
     console.error(fullscreenStatus.textContent, error);
   }
 });
@@ -494,7 +472,7 @@ function renderHistoryEntry(entry: HistoryEntry) {
       }
     } catch (error) {
       if (historyStatus) {
-        historyStatus.textContent = error.message;
+        historyStatus.textContent = errorMessage(error);
       }
       removeButton.disabled = false;
     }
@@ -594,7 +572,7 @@ async function initializeHistory() {
     await refreshHistory();
   } catch (error) {
     if (historyStatus) {
-      historyStatus.textContent = `O histórico local não pôde ser carregado: ${error.message}`;
+      historyStatus.textContent = `O histórico local não pôde ser carregado: ${errorMessage(error)}`;
     }
     if (historyEmpty) {
       historyEmpty.hidden = true;
@@ -760,7 +738,7 @@ function loadImage(file: File | null) {
 }
 
 dropZone.addEventListener("click", () => imageInput.click());
-imageInput.addEventListener("change", () => loadImage(imageInput.files[0]));
+imageInput.addEventListener("change", () => loadImage(imageInput.files?.[0] ?? null));
 removeImageButton.addEventListener("click", clearPreview);
 
 for (const eventName of ["dragenter", "dragover"]) {
@@ -778,7 +756,10 @@ for (const eventName of ["dragleave", "drop"]) {
 }
 
 dropZone.addEventListener("drop", (event) => {
-  loadImage(event.dataTransfer.files[0]);
+  const file = event.dataTransfer?.files[0];
+  if (file) {
+    loadImage(file);
+  }
 });
 
 navList.addEventListener("click", (event) => {
@@ -832,27 +813,14 @@ function setLoading(isLoading: boolean) {
   analysisForm.querySelectorAll<HTMLInputElement | HTMLSelectElement>("input, select").forEach((field) => {
     field.disabled = isLoading || Boolean(field.hidden);
   });
-  analyzeButton.querySelector("span").textContent = isLoading
+  requiredElement(analyzeButton, "span").textContent = isLoading
     ? "Analisando imagem..."
     : "Analisar gráfico com IA";
   analysisProgress.hidden = !isLoading;
 
-  if (loadingTimer) {
-    clearInterval(loadingTimer);
-    loadingTimer = null;
-  }
-
   if (isLoading) {
-    analysisProgress.textContent = OVERLAY_STEPS[0];
+    analysisProgress.textContent = "Análise em andamento; o progresso detalhado não é fornecido.";
     openAnalysisOverlay();
-    loadingTimer = window.setInterval(() => {
-      const elapsed = Date.now() - overlayStartedAt;
-      const stepIndex = OVERLAY_STEP_DELAYS.reduce(
-        (current, delay, index) => (elapsed >= delay ? index : current),
-        0,
-      );
-      setOverlayStep(stepIndex);
-    }, 2000);
   } else {
     closeAnalysisOverlay();
     analysisProgress.textContent = "";
@@ -1127,7 +1095,7 @@ feedbackPanel.addEventListener("click", async (event) => {
     buttons.forEach((item) => {
       item.disabled = false;
     });
-    feedbackStatus.textContent = error.message;
+    feedbackStatus.textContent = errorMessage(error);
   }
 });
 
@@ -1146,7 +1114,7 @@ clearHistoryButton?.addEventListener("click", async () => {
     }
   } catch (error) {
     if (historyStatus) {
-      historyStatus.textContent = error.message;
+      historyStatus.textContent = errorMessage(error);
     }
   } finally {
     clearHistoryButton.disabled = false;
@@ -1258,7 +1226,7 @@ analysisForm.addEventListener("submit", async (event) => {
       }
     } catch (error) {
       if (historyStatus) {
-        historyStatus.textContent = `A análise foi concluída, mas não foi possível salvar no histórico: ${error.message}`;
+        historyStatus.textContent = `A análise foi concluída, mas não foi possível salvar no histórico: ${errorMessage(error)}`;
       }
     }
   } catch (error) {
@@ -1266,7 +1234,7 @@ analysisForm.addEventListener("submit", async (event) => {
     showError(
       error instanceof TypeError
         ? `Não foi possível conectar ao servidor local. O endereço desta página é ${window.location.origin}. Abra http://127.0.0.1:8765/ pelo servidor iniciado no PowerShell e mantenha essa janela aberta.`
-        : error.message,
+        : errorMessage(error),
     );
   } finally {
     setLoading(false);

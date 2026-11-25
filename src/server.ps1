@@ -17,8 +17,17 @@ $script:ListenOrigin = "http://127.0.0.1:$($script:ListenPort)"
 $script:ListenHost   = "127.0.0.1:$($script:ListenPort)"
 
 # ---------- Configuracao via ambiente ----------
-$script:OpenAIModel        = if ($env:OPENAI_MODEL)              { $env:OPENAI_MODEL }              else { "gpt-4o-mini" }
-$script:OpenAIEndpoint     = "https://api.openai.com/v1/chat/completions"
+# Modelo principal. gpt-5.6-luna e um modelo de raciocinio (ver perfil abaixo);
+# gpt-4o-mini continua funcionando como alternativa via OPENAI_MODEL.
+$script:OpenAIModel        = if ($env:OPENAI_MODEL)              { $env:OPENAI_MODEL.Trim() }       else { "gpt-5.6-luna" }
+# Modelo alternativo usado somente quando a conta nao tem acesso ao principal
+# (HTTP 404 / model_not_found) e OPENAI_MODEL_FALLBACK nao esta vazio.
+$script:OpenAIFallbackModel = if ($env:OPENAI_MODEL_FALLBACK)     { $env:OPENAI_MODEL_FALLBACK.Trim() } else { "gpt-4o-mini" }
+if ($script:OpenAIFallbackModel -eq $script:OpenAIModel) { $script:OpenAIFallbackModel = "" }
+# Base da API. Serve para OpenAI compativel (gateway/Azure proxy) e para testes
+# com servidor local; o padrao continua sendo a API oficial.
+$script:OpenAIBaseUrl      = if ($env:OPENAI_BASE_URL)            { $env:OPENAI_BASE_URL.Trim().TrimEnd('/') } else { "https://api.openai.com/v1" }
+$script:OpenAIEndpoint     = "$($script:OpenAIBaseUrl)/chat/completions"
 $script:MaxOutputTokens    = if ($env:OPENAI_MAX_TOKENS)         { [int]$env:OPENAI_MAX_TOKENS }    else { 4000 }
 $script:ImageDetail        = if ($env:OPENAI_IMAGE_DETAIL)       { $env:OPENAI_IMAGE_DETAIL }       else { "high" }
 $script:HttpTimeoutSeconds = if ($env:OPENAI_TIMEOUT_SECONDS)    { [int]$env:OPENAI_TIMEOUT_SECONDS } else { 180 }
@@ -28,6 +37,22 @@ $script:StatusCacheTtlSec  = if ($env:OPENAI_STATUS_TTL_SECONDS) { [int]$env:OPE
 # Uma unica retentativa cobre 429/5xx transitorios sem multiplicar o consumo da
 # chave quando o provedor esta realmente fora do ar.
 $script:MaxRetries         = if ($env:OPENAI_MAX_RETRIES)        { [int]$env:OPENAI_MAX_RETRIES }   else { 1 }
+
+# Compatibilidade por familia de modelo. Modelos de raciocinio (gpt-5.x, gpt-6,
+# o-series) exigem max_completion_tokens e recusam temperature; os anteriores
+# aceitam temperature 0.0 e max_tokens. O perfil e derivado do id, nao de uma
+# lista fixa, e a disponibilidade real continua sendo checada em /v1/models.
+$script:ReasoningEffort = if ($env:OPENAI_REASONING_EFFORT)      { $env:OPENAI_REASONING_EFFORT }   else { "low" }
+$script:ModelProfile    = Get-OpenAIModelProfile -Model $script:OpenAIModel `
+  -OutputTokens $script:MaxOutputTokens -ReasoningEffort $script:ReasoningEffort
+$script:FallbackProfile = if ($script:OpenAIFallbackModel) {
+  Get-OpenAIModelProfile -Model $script:OpenAIFallbackModel `
+    -OutputTokens $script:MaxOutputTokens -ReasoningEffort $script:ReasoningEffort
+}
+else { $null }
+if (-not $script:ModelProfile.reasoningEffortValid) {
+  Write-Warning "OPENAI_REASONING_EFFORT='$($script:ModelProfile.reasoningEffortRequested)' nao e aceito por $($script:OpenAIModel). Valores validos: $(@(Get-OpenAIReasoningEfforts) -join ', '). Usando '$($script:ModelProfile.reasoningEffort)'."
+}
 
 # Protecoes locais: limite de analises por minuto (evita loop queimando
 # creditos) e tempo maximo de leitura do corpo da requisicao.
@@ -71,9 +96,12 @@ $script:StatusCache   = $null
 $script:StatusCacheAt = [datetime]::MinValue
 
 # ---------- Prompt ----------
-$script:AnalysisPromptPath = Join-Path $script:ProjectRoot "prompts\chart-analysis-v8.0.txt"
+$script:AnalysisContractVersion = Get-AnalysisContractVersion
+$script:AnalysisPromptPath = Join-Path $script:ProjectRoot (
+  "prompts\chart-analysis-v{0}.txt" -f $script:AnalysisContractVersion
+)
 if (-not (Test-Path -LiteralPath $script:AnalysisPromptPath -PathType Leaf)) {
-  throw "Nao foi possivel encontrar o prompt V8.0 em $script:AnalysisPromptPath."
+  throw "Nao foi possivel encontrar o prompt V$($script:AnalysisContractVersion) em $script:AnalysisPromptPath."
 }
 $script:AnalysisSystemPrompt = [System.IO.File]::ReadAllText(
   $script:AnalysisPromptPath,
@@ -212,7 +240,7 @@ function Get-OpenAIConnectionStatusUncached {
   try {
     $request = [System.Net.Http.HttpRequestMessage]::new(
       [System.Net.Http.HttpMethod]::Get,
-      "$($script:OpenAIEndpoint -replace '/chat/completions$', '')/models/$($script:OpenAIModel)"
+      "$($script:OpenAIBaseUrl)/models/$($script:OpenAIModel)"
     )
     $request.Headers.Authorization =
       [System.Net.Http.Headers.AuthenticationHeaderValue]::new("Bearer", $env:OPENAI_API_KEY)
@@ -223,6 +251,12 @@ function Get-OpenAIConnectionStatusUncached {
     }
     if ($statusCode -eq 429 -or $statusCode -ge 500) {
       return [pscustomobject]@{ state = "unstable"; message = "OpenAI instavel ou com limite temporario" }
+    }
+    if ($statusCode -eq 404 -and $script:OpenAIFallbackModel) {
+      return [pscustomobject]@{
+        state   = "unstable"
+        message = "Modelo $($script:OpenAIModel) indisponivel nesta chave; a analise usara $($script:OpenAIFallbackModel)"
+      }
     }
     return [pscustomobject]@{ state = "disconnected"; message = "OpenAI indisponivel: confira chave e modelo" }
   }
@@ -251,70 +285,16 @@ function Get-OpenAIConnectionStatus {
 # CHAMADA OPENAI COM RETRY
 # =====================================================================
 function Invoke-OpenAIRequest {
+  # A chamada HTTP e o retry vivem no modulo (Invoke-OpenAIChatCompletion) para
+  # poderem ser testados com transporte simulado, sem rede e sem creditos.
   param([Parameter(Mandatory = $true)][string]$JsonBody)
 
-  $attempt       = 0
-  $lastStatus    = 0
-  $lastBody      = ""
-  $lastException = $null
-  $totalMs       = 0
-
-  while ($attempt -le $script:MaxRetries) {
-    $attempt++
-    $sw   = [System.Diagnostics.Stopwatch]::StartNew()
-    $req  = $null
-    $resp = $null
-    try {
-      $req = [System.Net.Http.HttpRequestMessage]::new(
-        [System.Net.Http.HttpMethod]::Post,
-        $script:OpenAIEndpoint
-      )
-      $req.Headers.Authorization =
-        [System.Net.Http.Headers.AuthenticationHeaderValue]::new("Bearer", $env:OPENAI_API_KEY)
-      $req.Content = [System.Net.Http.StringContent]::new(
-        $JsonBody, [System.Text.Encoding]::UTF8, "application/json"
-      )
-      $resp = $script:AnalysisClient.SendAsync($req).GetAwaiter().GetResult()
-      $lastStatus = [int]$resp.StatusCode
-      $respBytes  = $resp.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult()
-      $lastBody   = [System.Text.Encoding]::UTF8.GetString($respBytes)
-      $sw.Stop()
-      $totalMs += $sw.ElapsedMilliseconds
-
-      if ($resp.IsSuccessStatusCode) {
-        return @{ Success = $true;  StatusCode = $lastStatus; Body = $lastBody; ElapsedMs = $totalMs; Attempts = $attempt }
-      }
-      if ($lastStatus -ne 429 -and $lastStatus -lt 500) {
-        return @{ Success = $false; StatusCode = $lastStatus; Body = $lastBody; ElapsedMs = $totalMs; Attempts = $attempt }
-      }
-    }
-    catch {
-      $sw.Stop()
-      $totalMs += $sw.ElapsedMilliseconds
-      $lastException = $_.Exception.Message
-      $lastStatus    = 0
-      $lastBody      = $lastException
-    }
-    finally {
-      if ($resp) { $resp.Dispose() }
-      if ($req)  { $req.Dispose() }
-    }
-
-    if ($attempt -le $script:MaxRetries) {
-      $backoffMs = [int]([Math]::Pow(2, $attempt - 1) * 2000)
-      Write-Warning "OpenAI indisponivel (tentativa $attempt/$($script:MaxRetries + 1)). Retentando em $([Math]::Round($backoffMs / 1000, 1))s..."
-      Start-Sleep -Milliseconds $backoffMs
-    }
-  }
-
-  return @{
-    Success    = $false
-    StatusCode = $lastStatus
-    Body       = $lastBody
-    ElapsedMs  = $totalMs
-    Attempts   = $attempt
-    Error      = $lastException
-  }
+  return Invoke-OpenAIChatCompletion -JsonBody $JsonBody `
+    -Endpoint $script:OpenAIEndpoint `
+    -ApiKey ([string]$env:OPENAI_API_KEY) `
+    -TimeoutSeconds $script:HttpTimeoutSeconds `
+    -MaxRetries $script:MaxRetries `
+    -Client $script:AnalysisClient
 }
 
 # =====================================================================
@@ -552,9 +532,17 @@ function Invoke-ImageAnalysis {
     }
   }
 
-  $cacheKey = Get-AnalysisCacheKey -ImageData $effectiveImageData -Market ([string]$body.market) `
-    -Asset $asset -Timeframe ([string]$body.timeframe) -AxisMin $axisMin -AxisMax $axisMax `
-    -Model $script:OpenAIModel -Preprocess $preprocessTag
+  $modelInUse = $script:OpenAIModel
+  # Uma chave por modelo: se a chamada cair no alternativo, o resultado fica
+  # guardado na chave do modelo que realmente respondeu.
+  $cacheKeys = @{}
+  foreach ($keyModel in @($script:OpenAIModel, $script:OpenAIFallbackModel)) {
+    if (-not $keyModel) { continue }
+    $cacheKeys[$keyModel] = Get-AnalysisCacheKey -ImageData $effectiveImageData `
+      -Market ([string]$body.market) -Asset $asset -Timeframe ([string]$body.timeframe) `
+      -AxisMin $axisMin -AxisMax $axisMax -Model $keyModel -Preprocess $preprocessTag
+  }
+  $cacheKey = $cacheKeys[$modelInUse]
   if ($script:AnalysisCacheTtlSeconds -gt 0) {
     $nowUtc = [datetime]::UtcNow
     foreach ($cachedKey in @($script:AnalysisCache.Keys)) {
@@ -591,41 +579,18 @@ Use exatamente esses valores em price_axis_min e price_axis_max. Nenhum valor de
 "@
   }
 
-  $requestBody = @{
-    model       = $script:OpenAIModel
-    temperature = 0.0
-    max_tokens  = $script:MaxOutputTokens
-    store       = $false
-    response_format = @{
-      type = "json_schema"
-      json_schema = @{
-        name   = "chart_analysis"
-        strict = $true
-        schema = (New-AnalysisResponseSchema)
-      }
-    }
-    messages = @(
-      @{ role = "system"; content = $systemPrompt },
-      @{
-        role    = "user"
-        content = @(
-          @{ type = "text"; text = $userPrompt },
-          @{
-            type      = "image_url"
-            image_url = @{
-              url    = "data:$mimeType;base64,$effectiveImageData"
-              detail = $script:ImageDetail
-            }
-          }
-        )
-      }
-    )
-  }
+  $built = New-OpenAIChatRequestBody -Model $modelInUse -SystemPrompt $systemPrompt `
+    -UserPrompt $userPrompt -MimeType $mimeType -ImageData $effectiveImageData `
+    -ImageDetail $script:ImageDetail -OutputTokens $script:MaxOutputTokens `
+    -ReasoningEffort $script:ReasoningEffort
+  $requestBody  = $built.Body
+  $modelProfile = $built.Profile
 
   $responseReceived = $false
   $statusCode       = 0
   $errorDetails     = ""
   $finishReason     = $null
+  $modelFallbackUsed = $false
 
   try {
     $jsonBody     = ConvertTo-Json -InputObject $requestBody -Depth 20 -Compress
@@ -634,25 +599,55 @@ Use exatamente esses valores em price_axis_min e price_axis_max. Nenhum valor de
     $statusCode   = $openAIResult.StatusCode
     $errorDetails = $openAIResult.Body
 
+    # Modelo configurado indisponivel para esta conta (404 / model_not_found):
+    # usa o alternativo UMA vez, reconstruindo o corpo porque os parametros
+    # podem ser diferentes (ex.: temperature/max_tokens do gpt-4o-mini).
+    # 400 de imagem, 401 e 429 nao disparam troca de modelo.
+    if (-not $openAIResult.Success -and $null -ne $script:FallbackProfile -and
+        (Test-OpenAIModelMissingError -StatusCode $openAIResult.StatusCode -Body $openAIResult.Body)) {
+      Write-Warning "O modelo $modelInUse nao esta disponivel para esta chave (HTTP $($openAIResult.StatusCode)). Usando o alternativo $($script:OpenAIFallbackModel)."
+      $fallbackBuilt = New-OpenAIChatRequestBody -Model $script:OpenAIFallbackModel `
+        -SystemPrompt $systemPrompt -UserPrompt $userPrompt -MimeType $mimeType `
+        -ImageData $effectiveImageData -ImageDetail $script:ImageDetail `
+        -OutputTokens $script:MaxOutputTokens -ReasoningEffort $script:ReasoningEffort
+      $requestBody      = $fallbackBuilt.Body
+      $modelProfile     = $fallbackBuilt.Profile
+      $jsonBody         = ConvertTo-Json -InputObject $requestBody -Depth 20 -Compress
+      $fallbackResult   = Invoke-OpenAIRequest -JsonBody $jsonBody
+      $fallbackResult.ElapsedMs += $openAIResult.ElapsedMs
+      $fallbackResult.Attempts  += $openAIResult.Attempts
+      $openAIResult      = $fallbackResult
+      $statusCode        = $openAIResult.StatusCode
+      $errorDetails      = $openAIResult.Body
+      $modelInUse        = $script:OpenAIFallbackModel
+      $modelFallbackUsed = $true
+    }
+
     if (-not $openAIResult.Success) {
-      throw "OpenAI HTTP $statusCode (apos $($openAIResult.Attempts) tentativa(s) em $($openAIResult.ElapsedMs)ms)"
+      throw "OpenAI HTTP $statusCode (apos $($openAIResult.Attempts) tentativa(s) em $($openAIResult.ElapsedMs)ms) usando $modelInUse"
     }
 
     $responseReceived = $true
     $openAIResponse   = ConvertFrom-Json -InputObject $openAIResult.Body
     $finishReason     = [string]$openAIResponse.choices[0].finish_reason
     $responseText     = [string]$openAIResponse.choices[0].message.content
+    $refusalText      = [string]$openAIResponse.choices[0].message.refusal
 
-    if (-not $responseText) {
-      throw "A OpenAI nao retornou uma analise legivel."
-    }
+    # Modelo de raciocinio pode gastar todo o orcamento pensando e devolver
+    # content vazio com finish_reason=length. O teste de conteudo vazio precisa
+    # vir DEPOIS da repeticao com mais tokens; senao a repeticao nunca acontece.
     if ($finishReason -eq "length") {
-      $retryTokenLimit = [int][Math]::Min(16000, [Math]::Max(8000, $script:MaxOutputTokens * 2))
-      if ($retryTokenLimit -gt $script:MaxOutputTokens) {
+      $currentLimit = 0
+      if ($requestBody.Contains($modelProfile.tokenParameter)) {
+        $currentLimit = [int]$requestBody[$modelProfile.tokenParameter]
+      }
+      $retryTokenLimit = [int][Math]::Min(16000, [Math]::Max(8000, [Math]::Max(1, $currentLimit) * 2))
+      if ($retryTokenLimit -gt $currentLimit) {
         $initialElapsedMs = $openAIResult.ElapsedMs
         $initialAttempts = $openAIResult.Attempts
         Write-Warning "A resposta foi cortada. Repetindo a analise com limite de $retryTokenLimit tokens..."
-        $requestBody.max_tokens = $retryTokenLimit
+        $appliedLimit = Set-OpenAIChatRequestBodyTokenLimit -Body $requestBody `
+          -Profile $modelProfile -Limit $retryTokenLimit
         $jsonBody = ConvertTo-Json -InputObject $requestBody -Depth 20 -Compress
         $openAIResult = Invoke-OpenAIRequest -JsonBody $jsonBody
         $openAIResult.ElapsedMs += $initialElapsedMs
@@ -661,19 +656,23 @@ Use exatamente esses valores em price_axis_min e price_axis_max. Nenhum valor de
         $errorDetails = $openAIResult.Body
 
         if (-not $openAIResult.Success) {
-          throw "OpenAI HTTP $statusCode na repeticao com limite de $retryTokenLimit tokens."
+          throw "OpenAI HTTP $statusCode na repeticao com limite de $appliedLimit tokens."
         }
 
         $openAIResponse = ConvertFrom-Json -InputObject $openAIResult.Body
         $finishReason = [string]$openAIResponse.choices[0].finish_reason
         $responseText = [string]$openAIResponse.choices[0].message.content
+        $refusalText = [string]$openAIResponse.choices[0].message.refusal
       }
       if ($finishReason -eq "length") {
         throw "A resposta da OpenAI continuou incompleta mesmo com o limite de saida configurado."
       }
-      if (-not $responseText) {
-        throw "A OpenAI nao retornou uma analise legivel na repeticao."
+    }
+    if (-not $responseText) {
+      if ($refusalText) {
+        throw "A OpenAI recusou a leitura desta imagem: $refusalText"
       }
+      throw "A OpenAI nao retornou uma analise legivel."
     }
 
     $responseText = Remove-ModelReasoningBlock -Text $responseText
@@ -700,8 +699,9 @@ Use exatamente esses valores em price_axis_min e price_axis_max. Nenhum valor de
       $firstClass = [string]$result.image_class
       $rereadImageData = if ($preprocessTag) { $imageData } else { $effectiveImageData }
       $rereadInstruction = New-ImageRereadInstruction -ImageClass $firstClass
-      $requestBody.messages[1].content[0].text = "$userPrompt`n`n$rereadInstruction"
-      $requestBody.messages[1].content[1].image_url.url = "data:$mimeType;base64,$rereadImageData"
+      $rereadContent = $requestBody["messages"][1]["content"]
+      $rereadContent[0]["text"] = "$userPrompt`n`n$rereadInstruction"
+      $rereadContent[1]["image_url"]["url"] = "data:$mimeType;base64,$rereadImageData"
       try {
         $rereadJsonBody = ConvertTo-Json -InputObject $requestBody -Depth 20 -Compress
         $rereadResponse = Invoke-OpenAIRequest -JsonBody $rereadJsonBody
@@ -761,7 +761,8 @@ Use exatamente esses valores em price_axis_min e price_axis_max. Nenhum valor de
       market            = [string]$body.market
       asset             = $asset
       timeframe         = [string]$body.timeframe
-      model             = $script:OpenAIModel
+      model             = $modelInUse
+      model_requested   = $script:OpenAIModel
       contract          = Get-AnalysisContractVersion
       direction         = [string]$result.direction
       action            = [string]$result.signal_timing.action
@@ -801,8 +802,11 @@ Use exatamente esses valores em price_axis_min e price_axis_max. Nenhum valor de
           Sort-Object { $script:AnalysisCache[$_].At })[0]
         if ($oldestKey) { $script:AnalysisCache.Remove($oldestKey) }
       }
-      $script:AnalysisCache[$cacheKey] = @{
-        At = [datetime]::UtcNow; Result = $result; Id = $analysisId; Preprocess = $preprocessTag
+      $cacheKeyUsed = $cacheKeys[$modelInUse]
+      if ($cacheKeyUsed) {
+        $script:AnalysisCache[$cacheKeyUsed] = @{
+          At = [datetime]::UtcNow; Result = $result; Id = $analysisId; Preprocess = $preprocessTag
+        }
       }
     }
 
@@ -814,11 +818,18 @@ Use exatamente esses valores em price_axis_min e price_axis_max. Nenhum valor de
     $resultHeaders = @{
       "X-ZNX-Analysis-Id" = $analysisId
       "X-ZNX-Preprocess"  = $preprocessTag
+      "X-ZNX-Model"       = $modelInUse
     }
+    if ($modelFallbackUsed) { $resultHeaders["X-ZNX-Model-Fallback"] = "1" }
     if ($rereadOutcome) { $resultHeaders["X-ZNX-Reread"] = $rereadOutcome }
     Send-JsonResponse -Response $response -StatusCode 200 -Data $result `
       -ExtraHeaders $resultHeaders
-    Write-Host "OK Analise $analysisId concluida em $($openAIResult.ElapsedMs) ms ($($openAIResult.Attempts) tentativa(s), modelo $($script:OpenAIModel))$usageText$preprocessText."
+    $reasoningText = if ($openAIResponse.usage.completion_tokens_details.reasoning_tokens) {
+      " | raciocinio: $([int]$openAIResponse.usage.completion_tokens_details.reasoning_tokens) tokens"
+    }
+    else { "" }
+    $fallbackText = if ($modelFallbackUsed) { " | alternativo de $($script:OpenAIModel)" } else { "" }
+    Write-Host "OK Analise $analysisId concluida em $($openAIResult.ElapsedMs) ms ($($openAIResult.Attempts) tentativa(s), modelo $modelInUse$fallbackText)$usageText$reasoningText$preprocessText."
     return
   }
   catch {
@@ -857,10 +868,16 @@ Use exatamente esses valores em price_axis_min e price_axis_max. Nenhum valor de
     }
 
     $diagnostic = if ($providerMessage) { $providerMessage } else { $_.Exception.Message }
-    if ($env:OPENAI_API_KEY) {
-      $diagnostic = $diagnostic -replace [regex]::Escape($env:OPENAI_API_KEY), "[chave oculta]"
+    # Se a falha local aconteceu depois de uma resposta do provedor (ex.: corpo
+    # antigo + excecao no meio), o erro local tambem precisa aparecer: senao a
+    # tela mostra o problema anterior e esconde a causa real.
+    if ($providerMessage -and $_.Exception.Message -and
+        $_.Exception.Message -notmatch '^(OpenAI HTTP|A resposta|A OpenAI)') {
+      $diagnostic = "$providerMessage | erro local: $($_.Exception.Message)"
     }
-    $diagnostic = $diagnostic -replace "(?i)Bearer\s+\S+", "Bearer [oculto]"
+    # Redacao unica (modulo): chave literal, cabecalho Bearer e qualquer token
+    # no formato sk- nunca chegam ao log, a resposta HTTP ou a tela.
+    $diagnostic = Hide-SensitiveDiagnostic -Text $diagnostic -ApiKey ([string]$env:OPENAI_API_KEY)
     $detailForUser = $diagnostic
     if ($detailForUser.Length -gt 220) {
       $detailForUser = $detailForUser.Substring(0, 220) + "..."
@@ -1186,7 +1203,10 @@ catch {
 }
 
 Write-Host "Scalping Edge disponivel em $($script:ListenOrigin)/"
-Write-Host "Modelo: $($script:OpenAIModel) | max_tokens: $($script:MaxOutputTokens) | detail: $($script:ImageDetail) | retries: $($script:MaxRetries) | realce: $($script:ImageEnhanceMode) | releitura: $(if ($script:RereadEnabled) { 'on' } else { 'off' })"
+Write-Host "Modelo: $($script:OpenAIModel) ($($script:ModelProfile.tokenParameter): $($script:MaxOutputTokens)$(if ($script:ModelProfile.reasoningEffort) { ", raciocinio: $($script:ModelProfile.reasoningEffort)" })) | alternativo: $(if ($script:OpenAIFallbackModel) { $script:OpenAIFallbackModel } else { 'desligado' }) | detail: $($script:ImageDetail) | retries: $($script:MaxRetries) | realce: $($script:ImageEnhanceMode) | releitura: $(if ($script:RereadEnabled) { 'on' } else { 'off' })"
+if ($script:OpenAIBaseUrl -ne "https://api.openai.com/v1") {
+  Write-Host "Base da API: $($script:OpenAIBaseUrl)"
+}
 if (-not $env:OPENAI_API_KEY) {
   Write-Warning "OPENAI_API_KEY nao esta configurada. A analise nao ficara disponivel ate configurar a chave e reiniciar."
 }
@@ -1249,6 +1269,16 @@ try {
           connectionMessage = $openAIStatus.message
           provider          = "openai"
           model             = $script:OpenAIModel
+          fallbackModel     = $script:OpenAIFallbackModel
+          # Como a requisicao e montada para este modelo. O painel e os testes
+          # usam isso para conferir a compatibilidade sem adivinhar.
+          family            = $script:ModelProfile.family
+          tokenParameter    = $script:ModelProfile.tokenParameter
+          maxOutputTokens   = $script:ModelProfile.maxOutputTokens
+          temperature       = $script:ModelProfile.temperature
+          reasoningEffort   = $script:ModelProfile.reasoningEffort
+          supportsStructuredOutputs = $script:ModelProfile.supportsStructuredOutputs
+          apiBaseUrl        = $script:OpenAIBaseUrl
         }
         continue
       }
@@ -1366,19 +1396,60 @@ try {
       }
 
       if ($request.HttpMethod -eq "GET" -and $requestPath -eq "/api/backtest/start") {
+        # mode=sweep compara 8 mercados x grade de stop/alvo. Sem mode, simula
+        # so o ativo escolhido, como antes.
+        $mode = [string]$request.QueryString["mode"]
+        $isSweep = $mode -eq "sweep"
         $symbol = [string]$request.QueryString["symbol"]
-        if ([string]::IsNullOrWhiteSpace($symbol)) {
-          Send-JsonResponse -Response $response -StatusCode 400 -Data @{
-            error = "Informe o ativo para simular (ex.: ?symbol=BTC-USD)."
+        $simulations = 10000
+        $targetAtr = 3.0
+        if (-not $isSweep) {
+          if ([string]::IsNullOrWhiteSpace($symbol)) {
+            Send-JsonResponse -Response $response -StatusCode 400 -Data @{
+              error = "Informe o ativo para simular (ex.: ?symbol=BTC-USD) ou use ?mode=sweep."
+            }
+            continue
           }
-          continue
-        }
-        $trackedSymbols = Get-ZnxTrackedSymbols
-        if ($trackedSymbols -notcontains $symbol) {
-          Send-JsonResponse -Response $response -StatusCode 400 -Data @{
-            error = "Ativo fora da lista acompanhada. Escolha um ativo do radar."
+          $trackedSymbols = Get-ZnxTrackedSymbols
+          if ($trackedSymbols -notcontains $symbol) {
+            Send-JsonResponse -Response $response -StatusCode 400 -Data @{
+              error = "Ativo fora da lista acompanhada. Escolha um ativo do radar."
+            }
+            continue
           }
-          continue
+
+          $simulationsRaw = [string]$request.QueryString["simulations"]
+          if ($simulationsRaw) {
+            $parsedSimulations = 0
+            if (-not [int]::TryParse($simulationsRaw, [ref]$parsedSimulations) -or
+              $parsedSimulations -lt 100 -or $parsedSimulations -gt 10000) {
+              Send-JsonResponse -Response $response -StatusCode 400 -Data @{
+                error = "O numero de reamostragens precisa ficar entre 100 e 10000."
+              }
+              continue
+            }
+            $simulations = $parsedSimulations
+          }
+
+          $targetAtrRaw = [string]$request.QueryString["targetAtr"]
+          if ($targetAtrRaw) {
+            $parsedTargetAtr = 0.0
+            $validTargetAtr = [double]::TryParse(
+              $targetAtrRaw,
+              [System.Globalization.NumberStyles]::Float,
+              [System.Globalization.CultureInfo]::InvariantCulture,
+              [ref]$parsedTargetAtr
+            )
+            if (-not $validTargetAtr -or [double]::IsNaN($parsedTargetAtr) -or
+              [double]::IsInfinity($parsedTargetAtr) -or $parsedTargetAtr -le 0 -or
+              $parsedTargetAtr -gt 100) {
+              Send-JsonResponse -Response $response -StatusCode 400 -Data @{
+                error = "O alvo em ATR precisa ser um numero finito maior que zero e no maximo 100."
+              }
+              continue
+            }
+            $targetAtr = $parsedTargetAtr
+          }
         }
         if ($null -ne $script:BacktestJob -and [string]$script:BacktestJob["state"] -eq "running") {
           Send-JsonResponse -Response $response -StatusCode 409 -Data ([ordered]@{
@@ -1392,16 +1463,23 @@ try {
           $script:BacktestHandle = $null
         }
 
-        $progress = New-ZnxBacktestProgress -Symbol $symbol
+        $progressSymbol = if ($isSweep) { "8 mercados" } else { $symbol }
+        $progress = New-ZnxBacktestProgress -Symbol $progressSymbol
         $script:BacktestJob = $progress
         $modulePath = Join-Path $PSScriptRoot "market.psm1"
         try {
           $job = [powershell]::Create()
           [void]$job.AddScript({
-            param($ModulePath, $Symbol, $Progress)
+            param($ModulePath, $Symbol, $Progress, $IsSweep, $Simulations, $TargetAtr)
             try {
               Import-Module -Name $ModulePath -Force
-              $result = Invoke-ZnxBacktest -Symbol $Symbol -Simulations 10000 -Progress $Progress
+              if ($IsSweep) {
+                $result = Invoke-ZnxBacktestSweep -Progress $Progress
+              }
+              else {
+                $result = Invoke-ZnxBacktest -Symbol $Symbol -Simulations $Simulations `
+                  -TargetAtr $TargetAtr -Progress $Progress
+              }
               if ($null -eq $result) { throw "A simulacao nao retornou resultado." }
               $Progress["result"] = $result
               $Progress["state"] = "done"
@@ -1410,7 +1488,13 @@ try {
               $Progress["error"] = $_.Exception.Message
               $Progress["state"] = "failed"
             }
-          }).AddArgument($modulePath).AddArgument($symbol).AddArgument($progress)
+          })
+          [void]$job.AddArgument($modulePath)
+          [void]$job.AddArgument($symbol)
+          [void]$job.AddArgument($progress)
+          [void]$job.AddArgument($isSweep)
+          [void]$job.AddArgument($simulations)
+          [void]$job.AddArgument($targetAtr)
           $script:BacktestHandle = $job
           [void]$job.BeginInvoke()
           Send-JsonResponse -Response $response -StatusCode 202 `
@@ -1531,7 +1615,8 @@ try {
         "pages/index.html", "pages/radar.html", "pages/noticias.html", "pages/historico.html",
         "assets/css/style.css", "assets/js/app.js", "assets/js/analysis-format.js",
         "assets/js/radar.js", "assets/js/pages.js", "assets/js/news.js",
-        "assets/js/history-page.js"
+        "assets/js/history-page.js", "assets/js/brave-fx.js",
+        "assets/build/react-islands.js", "assets/build/react-islands.css"
       )
       if ($relativePath -notin $allowedStaticPaths) {
         Send-TextResponse -Response $response -StatusCode 404 -Message "Arquivo nao encontrado."

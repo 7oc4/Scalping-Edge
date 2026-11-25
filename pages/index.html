@@ -8,12 +8,13 @@
     <meta name="theme-color" content="#080b0f" />
     <title>Scalping Edge — Analisar Gráficos</title>
     <link rel="stylesheet" href="../assets/css/style.css" />
+    <link rel="stylesheet" href="../assets/build/react-islands.css" />
     <script src="../assets/js/analysis-format.js" defer></script>
     <script src="../assets/js/app.js" defer></script>
   </head>
   <body>
     <div class="startup-loader" id="startup-loader" role="status" aria-live="polite">
-      <span class="startup-loader-ring" aria-hidden="true"></span>
+      <span id="splash-loader-root" aria-hidden="true"></span>
       <span class="startup-loader-brand">SCALPING <strong>EDGE</strong></span>
       <span class="startup-loader-caption">Preparando painel</span>
     </div>
@@ -54,6 +55,7 @@
 
       <main class="main-content" id="analisar">
         <header class="topbar">
+          <div id="market-ticker-root" class="min-w-0 flex-1"></div>
           <button
             class="fullscreen-toggle"
             id="fullscreen-toggle"
@@ -335,9 +337,9 @@
           </section>
 
           <footer class="page-footer">
-            <strong class="page-footer-brand">Criado por Operadores para Operadores.</strong>
+            <strong class="page-footer-brand">SCALPING EDGE</strong>
            
-            <span class="page-footer-note">Conteúdo educativo com base em leitura visual — não constitui recomendação financeira nem garantia de resultado.</span>
+            <span class="page-footer-note">Ferramenta educativa. Não é recomendação financeira nem garantia de resultado.</span>
           </footer>
         </div>
       </main>
@@ -366,7 +368,9 @@
 
         <p class="overlay-eyebrow">Análise em andamento</p>
         <h2 class="overlay-title" id="overlay-title">Lendo o seu gráfico</h2>
-        <p class="overlay-step" id="overlay-step">Preparando e otimizando a imagem…</p>
+        <p class="overlay-step">
+          O processamento está em andamento. O progresso detalhado não é fornecido pelo provedor.
+        </p>
 
         <div class="overlay-flight" aria-hidden="true">
           <svg viewBox="0 0 300 104" fill="none" role="presentation">
@@ -409,17 +413,18 @@
           </svg>
         </div>
 
-        <div class="overlay-progress">
-          <span id="overlay-progress-bar" style="width: 10%"></span>
-        </div>
-        <ol class="overlay-steps" id="overlay-steps">
-          <li><span class="overlay-dot"></span>Imagem</li>
-          <li><span class="overlay-dot"></span>Estrutura</li>
-          <li><span class="overlay-dot"></span>Leitura</li>
-          <li><span class="overlay-dot"></span>Contrato</li>
+        <div
+          class="overlay-progress"
+          role="progressbar"
+          aria-label="Análise da imagem em andamento"
+          aria-valuetext="Progresso indeterminado"
+        >
+          <span></span>
         </ol>
         <p class="overlay-hint">Tempo decorrido: <span id="overlay-elapsed">0s</span></p>
       </div>
     </div>
+    <div id="react-toast-root"></div>
+    <script type="module" src="../assets/build/react-islands.js"></script>
   </body>
 </html>
