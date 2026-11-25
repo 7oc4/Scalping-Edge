@@ -561,7 +561,7 @@
       return;
     }
     const readMs = feed && Number.isFinite(Number(feed.readMs)) ? Number(feed.readMs) : 0;
-    const parts = [`TradingView: ${live} ativo(s) em tempo real`, `lido ${stamp}`];
+    const parts = [`BOT: ${live} ativo(s) em tempo real`, `lido ${stamp}`];
     if (readMs > 0) {
       parts.push(`fonte em ${readMs} ms`);
     }
@@ -701,7 +701,7 @@
     // "Atualizar". O ciclo automatico nao altera o rotulo a cada leitura.
     const scanning = !silent || !marketReceivedAt;
     if (!silent) {
-      setStatus(radarStatus, "Buscando cotações no TradingView…");
+      setStatus(radarStatus, "BOT consultando cotações ao vivo…");
       if (!marketLoaded) {
         marketGroups.replaceChildren(el("p", "radar-placeholder", "Carregando cotações…"));
       }
@@ -1654,7 +1654,7 @@
       el(
         "p",
         null,
-        `Yahoo Finance · candles de 5m entre ${formatDate(data.from)} e ${formatDate(data.to)} · EMA 9/21 · stop 1,5 ATR · alvo ${targetRiskReward.toFixed(2)}R.`,
+        `BOT · candles de 5m entre ${formatDate(data.from)} e ${formatDate(data.to)} · EMA 9/21 · stop 1,5 ATR · alvo ${targetRiskReward.toFixed(2)}R.`,
       ),
     );
     riskHistoryResult.append(summary);
@@ -1755,7 +1755,7 @@
     const riskAmount = balance * (riskPercent / 100);
     setStatus(
       riskHistoryStatus,
-      "Consultando candles históricos no Yahoo Finance…",
+      "BOT consultando candles históricos…",
     );
     setBacktestProgress({
       state: "running",
@@ -2142,7 +2142,7 @@
       chartPriceNode.classList.add(change >= 0 ? "is-up" : "is-down");
       chartPriceNode.title =
         quote.live === true && quote.source === "TradingView"
-          ? `Última leitura ao vivo recebida às ${formatClock(data.at)} · TradingView`
+          ? `BOT · última leitura ao vivo recebida às ${formatClock(data.at)}`
           : "Sem cotação confirmada em tempo real.";
     }
     if (chartChangeNode) {
@@ -2159,11 +2159,11 @@
         `chart-badge ${live ? "is-live" : "is-delayed"}`,
         quote.source === "TradingView"
           ? live
-            ? "TradingView · tempo real"
-            : `TradingView · ${delay > 0 ? `${Math.round(delay / 60)} min` : "atraso"}`
-          : "Yahoo Finance",
+            ? "BOT"
+            : `BOT · ${delay > 0 ? `${Math.round(delay / 60)} min` : "atraso"}`
+          : "BOT",
       );
-      chartBadges.append(priceBadge, el("span", "chart-badge", "candles: Yahoo Finance"));
+      chartBadges.append(priceBadge, el("span", "chart-badge", "BOT"));
       if (data.currency) {
         chartBadges.append(el("span", "chart-badge", String(data.currency)));
       }
@@ -2202,7 +2202,7 @@
       chartPriceNode.textContent = formatPrice(price);
       chartPriceNode.classList.toggle("is-up", change >= 0);
       chartPriceNode.classList.toggle("is-down", change < 0);
-      chartPriceNode.title = `Cotação ao vivo consultada às ${formatClock(snapshot.at)} · TradingView`;
+      chartPriceNode.title = `BOT · cotação ao vivo consultada às ${formatClock(snapshot.at)}`;
     }
     if (chartChangeNode) {
       chartChangeNode.textContent = `${formatPercent(change)} · ${chartState.data.intervalLabel}`;
@@ -2211,7 +2211,7 @@
     }
     const priceBadge = chartBadges?.querySelector(".chart-badge");
     if (priceBadge) {
-      priceBadge.textContent = "TradingView · tempo real";
+      priceBadge.textContent = "BOT";
       priceBadge.classList.remove("is-delayed");
       priceBadge.classList.add("is-live");
     }
@@ -2546,7 +2546,7 @@
       }
       if (chartNote) {
         chartNote.textContent =
-          "Preço: TradingView em tempo real. Série de candles: API pública do Yahoo Finance, recarregada a cada 5 s. Nenhum valor é estimado ou atrasado — se um dado falta, o gráfico avisa em vez de mostrar número velho.";
+          "BOT · cotação em tempo real. Candles históricos da API pública do Yahoo Finance, recarregados a cada 5 s. Nenhum valor é estimado ou atrasado — se um dado falta, o gráfico avisa em vez de mostrar número velho.";
       }
       if (chartCard) {
         chartCard.classList.remove("is-fresh");

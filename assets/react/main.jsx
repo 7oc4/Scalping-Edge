@@ -346,7 +346,7 @@ function PriceSparkChart({ series, positive }) {
         <span>{numberText(minimum, 4)}</span>
       </span>
       <span className="pointer-events-none absolute bottom-0 left-0 rounded bg-[#05080a]/80 px-1 text-[8px] leading-3 text-zinc-500">
-        Yahoo Finance
+        BOT
       </span>
     </div>
   );

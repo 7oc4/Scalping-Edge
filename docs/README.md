@@ -61,7 +61,7 @@ em vez de fingir atualização. A mesma regra está registrada em `AGENTS.md`.
 
 ## Radar, gráfico e Máquina do tempo
 
-- **Mercado ao vivo**: `/api/market` é consultado a cada 2 s depois que a
+- **BOT — mercado ao vivo**: `/api/market` é consultado a cada 2 s depois que a
   requisição anterior termina (nunca empilha requisições). O servidor mantém
   cache de 250 ms para a cotação do TradingView, 60 s para a referência em R$
   do Investidor10 e 90 s para o histórico de candles. O laço mantém pelo menos
@@ -76,7 +76,7 @@ em vez de fingir atualização. A mesma regra está registrada em `AGENTS.md`.
 - **Falha por ativo, não do painel**: ativo sem preço ao vivo sai da lista e é
   apenas contado; o vermelho de erro é reservado a zero ativos em tempo real,
   quando o painel fica vazio e explica o motivo.
-- **Varredor em tempo real**: indicadores (EMA 9/21/50, RSI, ATR, regime de
+- **BOT — varredor em tempo real**: indicadores (EMA 9/21/50, RSI, ATR, regime de
   volatilidade, momentum, posição na faixa e frescor do rompimento) ficam 60 s
   em cache por ativo; preço e score são refeitos a cada leitura com a cotação
   ao vivo do TradingView. Depois da primeira varredura a aba Varredor usa
@@ -98,7 +98,7 @@ em vez de fingir atualização. A mesma regra está registrada em `AGENTS.md`.
   existe `is-scanning`, então nada gira “de enfeite”. A análise da imagem não
   expõe progresso intermediário do provedor; por isso a barra fica indeterminada
   até a resposta real, sem percentuais estimados.
-- **Gráfico**: candles reais da API pública de charts do Yahoo Finance com o
+- **Gráfico do BOT**: candles reais da API pública de charts do Yahoo Finance com o
   preço ao vivo do TradingView; as duas fontes aparecem na tela. O preço do
   cabeçalho acompanha as leituras reais do radar (intervalo de 2 s, ampliado
   quando a fonte demora ou falha); candles históricos recarregam a cada
@@ -125,7 +125,7 @@ em vez de fingir atualização. A mesma regra está registrada em `AGENTS.md`.
   outros temas; só exibe itens com data verificável dentro das últimas 24 horas.
   Atualiza a cada minuto; se uma fonte falhar, o horário real e o erro são
   preservados — nenhuma manchete ou data é inventada.
-- **Cálculo e Risco**: além do tamanho da posição e do break-even matemático,
+- **BOT — Cálculo e Risco**: além do tamanho da posição e do break-even matemático,
   permite conferir até 50 operações fechadas do histórico público Yahoo Finance
   (60 dias, candles de 5m, EMA 9/21, stop 1,5 ATR e alvo compatível com o
   risco/retorno informado). Exibe acertos e perdas observados; não completa
